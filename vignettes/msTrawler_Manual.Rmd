@@ -1,0 +1,53 @@
+---
+title: "msTrawler: Accounting for the properties of low signal intensities in the modeling of multiplexed proteomics experiments"
+author: Jonathon O'Brien
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+    theme: united
+vignette: >
+  %\VignetteIndexEntry{msTrawler_Manual}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+Topline Header requires no notation?
+---
+
+# Pre-processing Steps
+
+## Limit of Detection (LOD)
+TMT creates a phantom LOD.  This is crazy.  We did something cool.
+
+## Outlier Removal
+Standard stuff.  Works OK.  The interesting piece is the possibility of keeping the outliers but removing them from protein groups.
+
+## Global Sample Adjustments
+Turns out we don't want to use all measurements when aligning the columns.
+
+# Statistical Modeling
+
+## The full hypothetical model for protein abundance measurments
+
+## Bridge Channels and the Statistical Blocking of Scan IDs
+
+
+
+### What if we don't have a bridge channel?
+
+# Output Files and 
+
+### Now for the really weak stuff
+
+```{r}
+1+1
+```
+
