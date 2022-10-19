@@ -46,6 +46,11 @@
 #'  remain in the analysis by replacing the protein label
 #'  with a peptide sequence.  Set this parameter to NULL to
 #'  skip this form of outlier removal.
+#' @param N_SUM If the number of observations from a protein
+#'  within a sample, is less than N_SUM, then both the fluxes
+#'  and corresponding ion counts will be aggregated into a single
+#'  data point.  Setting this to a high value will activate the
+#'  single-level msTrawler model for all proteins.
 #' @param swapProtein Boolean variable that determines the
 #'  handling of outlier scans.  When a scan includes an observation
 #'  that exceeds the outlierCutoff, we will either remove the scan
@@ -87,7 +92,8 @@
 #'  default.  When TRUE, protein labels will be replaced with
 #'  peptide the peptide labels prior to calling any other functions.
 #'  In words, we will estimate relationships for peptides instead of
-#'  proteins.
+#'  proteins.  This also triggers the single-sample msTrawler model
+#'  regardless of the number of scans observed per peptide.
 #' @param randScan A boolean parameter that determines whether or not
 #'  the scan-to-scan variability will be accounted for with fixed or
 #'  random effects.  If TRUE, then random effects design matrix
@@ -111,7 +117,8 @@ msTrawl <- function(DF,
                     minAbove = 3,
                     ssnFilter = 20,
                     outlierCutoff = 4,
-                    swapProtein = TRUE,
+                    N_SUM = 3,
+                    swapProtein = FALSE,
                     maxPep = 25,
                     colAdjust = 0.5,
                     colRatios = NULL,
@@ -225,11 +232,10 @@ msTrawl <- function(DF,
       subSn <- snMat[protIndex, , drop = F]
       subPep <- DF[protIndex, "Peptide"]
       subSSN <- apply(subSn, 1, sum)
-      # If there are less than 3 observations do nothing
-      if (nrow(subDat) < 3) {
-        next
-      }
-
+      
+      # If there are less than 2 observations,then move on 
+      if(nrow(subDat) < 2){next}
+      
       # Create outlier indicator matrix
       if (!is.null(outlierCutoff)) {
         outlierMat <- findOutliers(subDat, subSn, outlierCutoff, scaleSN)
@@ -250,6 +256,27 @@ msTrawl <- function(DF,
         }
       }
 
+      #Check our aggregation criteria.  
+      n_after <- length(which(outlierRows == 0))
+      if ((n_after < N_SUM & n_after > 1) | peptideAnalysis == TRUE) {
+        
+      newSnVec <- apply(subSn[which(outlierRows == 0), ], 2, sum)
+      newFluxVec <- apply(subDat[which(outlierRows == 0), ], 2, sum)
+      #Update the peptide name to indicate aggregation
+      #Keep the first non-outlier row
+      keepIndex <- protIndex[which(outlierRows == 0)][1]
+      DF[keepIndex, "Peptide"] <- paste0(DF[protIndex[1], "Peptide"], "_SUM")
+      #Update all the quant rows
+      DF[keepIndex, grep("\\.Sn", colnames(DF))] <- newSnVec
+      DF[keepIndex, grep("Adjusted", colnames(DF))] <- newFluxVec
+      snMat[keepIndex, ] <- newSnVec
+      iMat[keepIndex, ] <- newFluxVec
+      #Flag the rest of the rows for removal
+      DF[setdiff(protIndex, keepIndex), "Protein.ID"] <- "OUTLIER_REMOVE_AT_ONCE!"
+      next
+      }
+      #End peptide aggregation step
+      
       # Limit the remaining observations to maxPep # of scans
       if (nrow(subDat) - length(outlierIndex) > maxPep) {
 
@@ -292,7 +319,7 @@ msTrawl <- function(DF,
 
   ############## Implement a global column adjustment############
 
-  if (is.null(colAdjust) | colAdjust == 0) {
+  if (is.null(colAdjust)) {
     normI <- iMat
   } else {
     if (length(colAdjust) == 1) {
@@ -820,15 +847,24 @@ msTrawl <- function(DF,
 
       # Now create a table counting the number of observed
       # samples in each factor cell
+      
+      #Re-factor to get rid of any levels that won't appear in this model
+      for(f in 1:length(factorCols)){
+        notBridge[, factorCols[f]] <- factor(notBridge[, factorCols[f]])
+      }
+      
       countTable <- tapply(notBridge$SampleID, notBridge[, factorCols],
         FUN = function(x) length(unique(x))
       )
+      
+      marginTable <- c(apply(countTable, 1, sum, na.rm=T), 
+        apply(countTable, 2, sum, na.rm=T))
 
-      nCells <- sum(!is.na(countTable))
+      nCells <- sum(!is.na(marginTable))
 
       # If we have continuous covariates, make sure they have
-      # support in every cell (> 2 + n_cont)
-      if (n_cont > 0 & min(countTable, na.rm = TRUE) < n_cont + 2) {
+      # support in every margin cell (> 2 + n_cont)
+      if (n_cont > 0 & min(marginTable, na.rm = TRUE) < n_cont + 2) {
         reducedMod <- TRUE
         # This will first be used to used to remove continous
         # covariates from tempCov
@@ -845,8 +881,8 @@ msTrawl <- function(DF,
       # Make sure we have at least 3 "extra" samples to estimate between
       # sample variance and no confounding of fixed and random effects, i.e.
       # No cells with only 1 sample
-      if (sum(countTable, na.rm = T) - p_ < 3 |
-        min(countTable, na.rm = TRUE) < 2) {
+      if (sum(marginTable, na.rm = T) - p_ < 3 |
+        min(marginTable, na.rm = TRUE) < 2) {
         multiLevel <- FALSE
       } else {
         multiLevel <- TRUE
@@ -1113,6 +1149,7 @@ protPrep <- function(DF,
                      minAbove = 3,
                      ssnFilter = 20,
                      outlierCutoff = 4,
+                     N_SUM = 3,
                      swapProtein = FALSE,
                      maxPep = 25,
                      colAdjust = 0.5,
@@ -1212,7 +1249,7 @@ protPrep <- function(DF,
 
 
   ################## Remove outliers from protein groupings##########
-
+  
   # Make sure the relevant ID columns are character vectors
   # so that replacement with peptide names does not result in NA
   DF$Protein.ID <- as.character(DF$Protein.ID)
@@ -1222,28 +1259,26 @@ protPrep <- function(DF,
   for (j in 1:length(uPlex)) {
     for (i in 1:length(uProt)) {
       protIndex <- which(DF$Protein.ID == uProt[i] &
-        DF$Plex == uPlex[j])
+                           DF$Plex == uPlex[j])
       subDat <- iMat[protIndex, , drop = F]
       subSn <- snMat[protIndex, , drop = F]
       subPep <- DF[protIndex, "Peptide"]
       subSSN <- apply(subSn, 1, sum)
-      # If there are less than 3 observations do nothing
-      if (nrow(subDat) < 3) {
-        next
-      }
-
-      # Create outlier indicator matrix
+      
+      # If there are less than 2 observations,then move on 
+      if(nrow(subDat) < 2){next}
+      
       # Create outlier indicator matrix
       if (!is.null(outlierCutoff)) {
         outlierMat <- findOutliers(subDat, subSn, outlierCutoff, scaleSN)
       } else {
         outlierMat <- matrix(0, nrow = nrow(subDat), ncol = ncol(subDat))
       }
-
+      
       # Figure out which rows have outliers
       outlierRows <- apply(outlierMat, 1, sum, na.rm = T)
       outlierIndex <- protIndex[which(outlierRows > 0)]
-
+      
       # Now change the protein labels of each outlier
       if (length(outlierIndex) > 0) {
         if (swapProtein == TRUE) {
@@ -1252,10 +1287,31 @@ protPrep <- function(DF,
           DF[outlierIndex, "Protein.ID"] <- "OUTLIER_REMOVE_AT_ONCE!"
         }
       }
-
+      
+      #Check our aggregation criteria.  
+      n_after <- length(which(outlierRows == 0))
+      if ((n_after < N_SUM & n_after > 1) | peptideAnalysis == TRUE) {
+        
+        newSnVec <- apply(subSn[which(outlierRows == 0), ], 2, sum)
+        newFluxVec <- apply(subDat[which(outlierRows == 0), ], 2, sum)
+        #Update the peptide name to indicate aggregation
+        #Keep the first non-outlier row
+        keepIndex <- protIndex[which(outlierRows == 0)][1]
+        DF[keepIndex, "Peptide"] <- paste0(DF[protIndex[1], "Peptide"], "_SUM")
+        #Update all the quant rows
+        DF[keepIndex, grep("\\.Sn", colnames(DF))] <- newSnVec
+        DF[keepIndex, grep("Adjusted", colnames(DF))] <- newFluxVec
+        snMat[keepIndex, ] <- newSnVec
+        iMat[keepIndex, ] <- newFluxVec
+        #Flag the rest of the rows for removal
+        DF[setdiff(protIndex, keepIndex), "Protein.ID"] <- "OUTLIER_REMOVE_AT_ONCE!"
+        next
+      }
+      #End peptide aggregation step
+      
       # Limit the remaining observations to maxPep # of scans
       if (nrow(subDat) - length(outlierIndex) > maxPep) {
-
+        
         # Rank order each scan, smallest to largest, within each peptide
         # Data was ordered by protein, plex, peptide.  We are in a protein
         # and plex loop.  So peptides should be consecutive
@@ -1264,14 +1320,14 @@ protPrep <- function(DF,
           order(subSSN[which(subPep == x)], decreasing = TRUE)
         })
         rankVector <- do.call(c, listOranks)
-
+        
         # Assign outliers an unrealistically high rank
         if (length(outlierIndex) > 0) {
           rankVector[which(outlierRows > 0)] <- 999999
         }
-
+        
         snOrder <- order(rankVector, (-1 * subSSN)) # small rank, large SSN
-
+        
         # Find the sub-indices of the top maxPep signals
         bigIndex <- head(snOrder, n = maxPep)
         # Find the indices of everything but the top maxPep
@@ -1281,6 +1337,7 @@ protPrep <- function(DF,
       }
     } # End protein loop
   } # End plex loop
+  
 
   outlierIndex <- grep("OUTLIER_REMOVE_AT_ONCE!", DF$Protein.ID)
   tooManyIndex <- grep("TOO_MANY!!!", DF$Protein.ID)
@@ -1296,7 +1353,7 @@ protPrep <- function(DF,
 
   ############## Implement a global column adjustment############
 
-  if (is.null(colAdjust) | colAdjust == 0) {
+  if (is.null(colAdjust)) {
     normI <- iMat
   } else {
     if (length(colAdjust) == 1) {
@@ -1863,17 +1920,27 @@ miniTrawl <- function(rdaSubset) {
     if (n_cat > 0) {
       factorCols <- which(colnames(protDat) %in% factorNames)
 
+      #Check the rules for multi-level modeling
       # Now create a table counting the number of observed
       # samples in each factor cell
+      
+      #Re-factor to get rid of any levels that won't appear in this model
+      for(f in 1:length(factorCols)){
+        notBridge[, factorCols[f]] <- factor(notBridge[, factorCols[f]])
+      }
+      
       countTable <- tapply(notBridge$SampleID, notBridge[, factorCols],
-        FUN = function(x) length(unique(x))
+                           FUN = function(x) length(unique(x))
       )
-
-      nCells <- sum(!is.na(countTable))
-
+      
+      marginTable <- c(apply(countTable, 1, sum, na.rm=T), 
+                       apply(countTable, 2, sum, na.rm=T))
+      
+      nCells <- sum(!is.na(marginTable))
+      
       # If we have continuous covariates, make sure they have
-      # support in every cell (> 2 + n_cont)
-      if (n_cont > 0 & min(countTable, na.rm = TRUE) < n_cont + 2) {
+      # support in every margin cell (> 2 + n_cont)
+      if (n_cont > 0 & min(marginTable, na.rm = TRUE) < n_cont + 2) {
         reducedMod <- TRUE
         # This will first be used to used to remove continous
         # covariates from tempCov
@@ -1886,18 +1953,19 @@ miniTrawl <- function(rdaSubset) {
         coVars_reduced <- coVars
         p_ <- nCells + length(timeVars) + n_cont
       }
-
+      
       # Make sure we have at least 3 "extra" samples to estimate between
       # sample variance and no confounding of fixed and random effects, i.e.
       # No cells with only 1 sample
-      if (sum(countTable, na.rm = T) - p_ < 3 |
-        min(countTable, na.rm = TRUE) < 2) {
+      if (sum(marginTable, na.rm = T) - p_ < 3 |
+          min(marginTable, na.rm = TRUE) < 2) {
         multiLevel <- FALSE
       } else {
         multiLevel <- TRUE
       }
-
-
+      
+      #End establish multi-level rules
+      
       for (i in 1:length(factorNames)) {
         allLevels <- levelNames[[i]]
         levelN <- length(levelNames[[i]])

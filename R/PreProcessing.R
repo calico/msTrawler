@@ -413,7 +413,7 @@ adaptModel <- function(protDat, covType, fixedForm,
     badPars <- ""
   }
 
-  if (randScan == TRUE) { # Fit the model with random scan effects
+  if (randScan == TRUE) { # Fit the model with random scan effects (EXPERIMENTAL)
     if (randID == "SampleID") {
       lmerForm <- as.formula("y_ ~ X_ + 0 + (1|Scan) + (0 + sampleI | sampleID)")
       lmerForm2 <- NULL
@@ -489,19 +489,41 @@ adaptModel <- function(protDat, covType, fixedForm,
       }
     }
   } else { # End attempt multi-level
-    tempMod <- try(lm(y_ ~ 0 + X_, weights = 1 / w_), silent = T)
+    if (randID != "SampleID") {
+      lmerForm <- as.formula("y_ ~ X_ + 0 + (1 | subjectID)")
+      tempMod <- try(lme4::lmer(lmerForm,
+                                weights = 1 / w_,
+                                control = lme4::lmerControl(
+                                  check.nobs.vs.nlev = "stop",
+                                  check.nobs.vs.nRE = "stop"
+                                )
+      ),
+      silent = TRUE
+      )
+      modelType <- "lmer_1_Level"
+      if (reducedMod == FALSE) {
+        resList[[3]] <- "lmer_1_Level"
+      } else {
+        resList[[3]] <- "lmer_1_Level reduced"
+      }
+    }else{
+      tempMod <- try(lm(y_ ~ 0 + X_, weights = 1 / w_), silent = T)
+      # Report lm results
+      modelType <- "lm"
+      if (reducedMod == FALSE) {
+        resList[[3]] <- "lm"
+      } else {
+        resList[[3]] <- "lm reduced"
+      }
+    }
+    
+    
     # If this didn't work, move on
     if (class(tempMod) == "try-error") {
       resList[[3]] <- "none"
       next
     }
-    # Report lm results
-    modelType <- "lm"
-    if (reducedMod == FALSE) {
-      resList[[3]] <- "lm"
-    } else {
-      resList[[3]] <- "lm reduced"
-    }
+
   } # End option C
 
 
