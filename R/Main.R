@@ -258,7 +258,7 @@ msTrawl <- function(DF,
 
       #Check our aggregation criteria.  
       n_after <- length(which(outlierRows == 0))
-      if ((n_after < N_SUM & n_after > 1) | peptideAnalysis == TRUE) {
+      if ((n_after < N_SUM & n_after > 1) |  (peptideAnalysis == TRUE & n_after > 1)) {
         
       newSnVec <- apply(subSn[which(outlierRows == 0), , drop=FALSE], 2, sum)
       newFluxVec <- apply(subDat[which(outlierRows == 0), , drop=FALSE], 2, sum)
@@ -1290,7 +1290,7 @@ protPrep <- function(DF,
       
       #Check our aggregation criteria.  
       n_after <- length(which(outlierRows == 0))
-      if ((n_after < N_SUM & n_after > 1) | peptideAnalysis == TRUE) {
+      if ((n_after < N_SUM & n_after > 1) | (peptideAnalysis == TRUE & n_after > 1)) {
         
         newSnVec <- apply(subSn[which(outlierRows == 0), , drop=FALSE], 2, sum)
         newFluxVec <- apply(subDat[which(outlierRows == 0), , drop=FALSE], 2, sum)
