@@ -260,8 +260,8 @@ msTrawl <- function(DF,
       n_after <- length(which(outlierRows == 0))
       if ((n_after < N_SUM & n_after > 1) | peptideAnalysis == TRUE) {
         
-      newSnVec <- apply(subSn[which(outlierRows == 0), ], 2, sum)
-      newFluxVec <- apply(subDat[which(outlierRows == 0), ], 2, sum)
+      newSnVec <- apply(subSn[which(outlierRows == 0), , drop=FALSE], 2, sum)
+      newFluxVec <- apply(subDat[which(outlierRows == 0), , drop=FALSE], 2, sum)
       #Update the peptide name to indicate aggregation
       #Keep the first non-outlier row
       keepIndex <- protIndex[which(outlierRows == 0)][1]
@@ -1292,8 +1292,8 @@ protPrep <- function(DF,
       n_after <- length(which(outlierRows == 0))
       if ((n_after < N_SUM & n_after > 1) | peptideAnalysis == TRUE) {
         
-        newSnVec <- apply(subSn[which(outlierRows == 0), ], 2, sum)
-        newFluxVec <- apply(subDat[which(outlierRows == 0), ], 2, sum)
+        newSnVec <- apply(subSn[which(outlierRows == 0), , drop=FALSE], 2, sum)
+        newFluxVec <- apply(subDat[which(outlierRows == 0), , drop=FALSE], 2, sum)
         #Update the peptide name to indicate aggregation
         #Keep the first non-outlier row
         keepIndex <- protIndex[which(outlierRows == 0)][1]
