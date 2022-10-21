@@ -857,8 +857,13 @@ msTrawl <- function(DF,
         FUN = function(x) length(unique(x))
       )
       
-      marginTable <- c(apply(countTable, 1, sum, na.rm=T), 
-        apply(countTable, 2, sum, na.rm=T))
+      if(is.matrix(countTable)){
+        marginTable <- c(apply(countTable, 1, sum, na.rm=T), 
+                         apply(countTable, 2, sum, na.rm=T))
+      }else{
+        marginTable <- countTable
+      }
+      
 
       nCells <- sum(!is.na(marginTable))
 
@@ -1933,8 +1938,12 @@ miniTrawl <- function(rdaSubset) {
                            FUN = function(x) length(unique(x))
       )
       
-      marginTable <- c(apply(countTable, 1, sum, na.rm=T), 
-                       apply(countTable, 2, sum, na.rm=T))
+      if(is.matrix(countTable)){
+        marginTable <- c(apply(countTable, 1, sum, na.rm=T), 
+                         apply(countTable, 2, sum, na.rm=T))
+      }else{
+        marginTable <- countTable
+      }
       
       nCells <- sum(!is.na(marginTable))
       
