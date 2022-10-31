@@ -531,7 +531,7 @@ adaptModel <- function(protDat, covType, fixedForm,
 
   # Extract results depending on type of reference covariate
   if (covType == "Factor") {
-    if (modelType == "lm") {
+    if (length(grep("lm$", modelType)) > 0 | length(grep("lm ", modelType)) > 0) {
       tTable <- summary(tempMod)$coefficients
       estPars <- tTable[, 1] # Analagous to the fixef() vector
       tTable <- tTable[, -c(2:3)]
@@ -544,7 +544,7 @@ adaptModel <- function(protDat, covType, fixedForm,
         tTable[badI, ] <- NA
       }
     }
-    if (modelType == "lmer" | modelType == "lmer2") {
+    if (length(grep("lmer", modelType) > 0)) {
       # If there was no error, report results from the lme model
       # tTable  <- summary(tempMod)$tTable
       # tTable <- tTable[ , -c(2:4)]
