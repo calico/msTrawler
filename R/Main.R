@@ -1041,7 +1041,7 @@ msTrawl <- function(DF,
           notBridge[, factorCols[z]] <- factor(notBridge[, factorCols[z]])
         }
         # If the continuous covariate was removed, put it back
-        if (reducedMod <- TRUE) {
+        if (reducedMod == TRUE) {
           tempCov <- c(tempCov, contNames)
           tempStr <- paste0("lIntensity ~ ", paste(c(tempCov), collapse = " + "))
           tempForm <- as.formula(tempStr)
@@ -2127,7 +2127,7 @@ miniTrawl <- function(rdaSubset) {
           notBridge[, factorCols[z]] <- factor(notBridge[, factorCols[z]])
         }
         # If the continuous covariate was removed, put it back
-        if (reducedMod <- TRUE) {
+        if (reducedMod == TRUE) {
           tempCov <- c(tempCov, contNames)
           tempStr <- paste0("lIntensity ~ ", paste(c(tempCov), collapse = " + "))
           tempForm <- as.formula(tempStr)
