@@ -674,7 +674,7 @@ adaptModel <- function(protDat, covType, fixedForm,
 
   # Now extract continuous covariate
   if (covType == "Continuous") {
-    if (modelType == "lm") {
+    if  (length(grep("lm$", modelType)) > 0 | length(grep("lm ", modelType)) > 0){
       tTable <- summary(tempMod)$coefficients
       tTable <- tTable[, -c(2:3)]
       # Add an empty column to later populate with q-values
@@ -683,7 +683,7 @@ adaptModel <- function(protDat, covType, fixedForm,
 
 
 
-    if (modelType == "lmer" | modelType == "lmer2") {
+    if (length(grep("lmer", modelType)) > 0) {
 
       # Set tTable for an lmer model
       tTable <- matrix(NA, nrow = length(fullColumns), ncol = 3)
