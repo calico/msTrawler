@@ -1,0 +1,4 @@
+Covariate,Type,Levels,TimeDegree,TimeCategory,Circadian
+MouseID,id,0,0,0,0
+Age,factor,2,0,1,0
+Time,time,0,0,0,1

@@ -1,0 +1,137 @@
+---
+title: "msTrawler: Accounting for the properties of low signal intensities in the modeling of multiplexed proteomics experiments"
+author: Jonathon O'Brien
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+    theme: united
+vignette: >
+  %\VignetteIndexEntry{msTrawler_Manual}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## Topline Header requires no notation?
+
+# Pre-processing Steps
+
+## Limit of Detection (LOD)
+
+Function Description: tmtLOD The tmtLOD function is used for imputing missing values in a matrix of signal-to-noise ratios and a matrix of intensities.
+It takes three main arguments: snMat, a matrix of signal-to-noise ratios with channels in the columns and scans in each row; iMat, a matrix of intensities with channels in the columns and scans in each row; and lod, a value that determines the limit of reliability.
+The threshold will be a proportion of the total scan intensity if the value is between zero and one.
+If lod \>= 1, then the threshold will be set at a SNR = lod for all scans.
+
+Input Parameters The input parameters for the tmtLOD function are as follows:
+
+snMat: a matrix of signal-to-noise ratios with channels in the columns and scans in each row.
+iMat: a matrix of intensities with channels in the columns and scans in each row.
+lod: a value that determines the limit of reliability.
+If the value is between zero and one, then the threshold will be a proportion of the total scan intensity.
+If lod \>= 1, then the threshold will be set at a SNR = lod for all scans.
+minAbove: an integer value that represents the minimum number of observations above the lod threshold that a scan must have in order to not be flagged as too few.
+scaleSN: a numeric value used to scale the standard deviation of the imputed values.
+imputePenalty: a numeric value used to adjust the penalty function used for imputing missing values.
+Output Parameters The output of the tmtLOD function is a length three list.
+The first component has a matrix of post-imputation intensities, and the second has the post-imputation SNRs.
+The final component contains an indicator variable for flagging scans with too few observations above the lod threshold (as determined by minAbove).
+
+Algorithm The tmtLOD function uses the following algorithm:
+
+Calculate aggregate measures that will be used to find a threshold, including the total signal-to-noise ratio and total intensity for each scan, as well as a matrix of proportions of intensities for each scan.
+Figure out which values will be censored (i.e., imputed) by creating a boolean matrix censoredB based on whether the proportions of intensities are below the lod threshold.
+If lod \< 1, then the censoredB matrix is calculated based on proportions of intensities; otherwise, it is calculated based on SNRs.
+Also, create a vector of indices censoredI of the elements in iMat and snMat that are below the lod threshold.
+Check for scans with too few observations above the lod threshold by creating a boolean vector tooFew, which is set to TRUE if a scan has fewer than minAbove observations above the lod threshold.
+Calculate relevant thresholds for imputing missing values based on the lod value.
+If lod \< 1, then thresholds can be found independently for SNRs and intensities; otherwise, the SN limit can be converted to an intensity by matching rank-ordered observations.
+Generate imputed values using a log-normal distribution with a mean of half the relevant threshold and a standard deviation scaled by the scaleSN parameter.
+Update the iMat and snMat matrices with the
+
+## Outlier Removal
+
+Standard stuff.
+Works OK. The interesting piece is the possibility of keeping the outliers but removing them from protein groups.
+
+## Global Sample Adjustments
+
+Function Description: geoNorm The geoNorm function performs global column adjustments on a matrix of reporter ion intensities.
+It takes four input arguments: mat, a matrix of reporter ion intensities that need to be adjusted; normIndex, a boolean vector with length equal to the number of rows in mat, indicating which rows will be used to calculate the normalization factors; Plex, a vector denoting plex membership, which determines how many adjustments will be made; and ratios, a numeric vector with length equal to the number of normalization factors, which determines the expected relationship between all of the columns.
+
+The function returns a list with two components.
+The first component is a matrix that has been adjusted so that the geometric mean of the subset of rows specified by normIndex will be equivalent across all columns.
+The second list component contains a vector with all the log additive values used to adjust each column.
+
+Input Parameters The input parameters for the geoNorm function are as follows:
+
+mat: a matrix of reporter ion intensities that need to be adjusted.
+normIndex: a boolean vector with length equal to the number of rows in mat.
+Each TRUE indicates that the corresponding row will be used to calculate the normalization factors.
+Plex: a vector denoting plex membership.
+Normalization factors are computed for every channel\*plex combination.
+Accordingly, this variable determines how many adjustments will be made.
+ratios: a numeric vector with length equal to the number of normalization factors.
+The ratios in this vector determine the expected relationship between all of the columns.
+Output Parameters The output of the geoNorm function is a list with two components:
+
+The first component is a matrix that has been adjusted so that the geometric mean of the subset of rows specified by normIndex will be equivalent across all columns.
+The second list component contains a vector with all the log additive values used to adjust each column.
+Algorithm The geoNorm function uses the following algorithm to perform global column adjustments:
+
+Replace any 0 values in the input mat matrix with NA values, since log2(0) is undefined.
+Take the logarithm (base 2) of the input mat matrix and store the result in a new matrix called lMat.
+Get a vector of unique plex membership values (uPlex) from the Plex input vector.
+Calculate the mean of the lMat matrix for each unique plex membership value (chMeans) using the rows specified by the normIndex input vector.
+Calculate the grand mean of the chMeans vector minus the log2(ratios) vector to get the log additive value that will be used to adjust each column (grandMean).
+Subtract log2(ratios) and grandMean from chMeans to get the normalization factors (normFactors) for each unique plex membership value.
+If there is more than one unique plex membership value, rename the columns of the normFactors matrix with the corresponding plex membership value.
+Adjust each channel*plex combination of the lMat matrix by subtracting the corresponding normalization factors and then exponentiate each element. Store the result in a list called normed. Update the input mat matrix with the normalized values in the normed list, by replacing the original values with the normalized values for each channel*plex combination.
+Return a list with the updated mat matrix as the first component and the normFactors matrix as the second component.
+
+title: "Remove consensus outliers from protein groupings" output: html_document {r Copy code knitr::opts_chunk\$set(echo = TRUE) Overview The findOutliers function removes consensus outliers from protein groupings by fitting two linear models to the data and identifying entries that meet the definition of an outlier.
+The first model fits the average profile without an intercept, while the second model fits with an intercept.
+The function then calculates the standardized residuals for both models and identifies outliers based on the absolute value of these residuals.
+Entries are considered outliers if they meet the outlier criteria for either model.
+The function returns a matrix of boolean values indicating which entries are considered outliers.
+
+#findOutliers Function parameters The findOutliers function has the following parameters:
+
+protMat: A matrix of reporter ion intensities from a single protein.
+snMat: A matrix of signal-to-noise values for the reporter ions.
+outlierCutoff: Numeric value specifying the cutoff for defining an outlier based on the absolute value of standardized residuals (default: 3).
+scaleSN: Scaling factor for the signal-to-noise values in the linear model (default: 1).
+Return value The function returns a matrix of boolean values indicating which entries meet the definition of an outlier.
+
+Example {r} Copy code \# Load data \# protMat \<- your_protein_matrix \# snMat \<- your_sn_matrix
+
+# Find outliers
+
+# outliers \<- findOutliers(protMat, snMat)
+
+See also msTrawl: A function for processing and analyzing mass spectrometry data.
+# Statistical Modeling
+
+## The full hypothetical model for protein abundance measurments
+
+## Bridge Channels and the Statistical Blocking of Scan IDs
+
+### What if we don't have a bridge channel?
+
+# Output Files and
+
+### Now for the really weak stuff
+
+```{r}
+1+1
+```

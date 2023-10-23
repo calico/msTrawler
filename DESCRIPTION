@@ -1,0 +1,26 @@
+Package: msTrawler
+Type: Package
+Title: Peptide level modeling of protein associations
+Version: 0.1.0.041423
+Author: Jonathon O'Brien, Wenzhou Li
+Maintainer: Jonathon O'Brien <obrien@calicolabs.com>
+Description: A toolkit for analyzing multiplexed proteomics data
+  with an emphasis on finding a reliability threshold and accounting
+  for signal dependent heteroskedactity.
+License: What license is it under?
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.2.3
+Imports:
+  reshape2 (>= 1.4.3),
+  nlme (>= 3.1-152),
+  car (>= 3.0-2),
+  lme4 (>= 1.1-21),
+  pbkrtest (>= 0.4-7),
+  tools (>= 3.6.0)
+Depends: 
+    R (>= 2.10)
+Suggests: 
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
