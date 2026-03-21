@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: mstrawler
-Version: 0.1.dev9+gd96eb08c0.d20260321
+Version: 0.1.dev11+g88b96a03f
 Summary: Peptide-level modeling of protein associations from multiplexed proteomics data
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
@@ -286,6 +286,54 @@ Future enhancements to the model-fitting layer:
 
 3. **Bootstrap p-values** — resample-based inference as a backend-agnostic alternative to both KR and Wald tests.
 
+## Command-Line Interface
+
+The `mstrawler` CLI avoids the need to write Python scripts for common tasks.
+
+### Run full analysis
+
+```bash
+mstrawler run \
+  --psm PSMs.txt \
+  --protein Proteins.txt \
+  --sample sample_file.csv \
+  --covariate covariate_file.csv \
+  --output ./results \
+  --backend python \
+  --seed 42
+```
+
+### Convert files only (no modeling)
+
+```bash
+mstrawler convert --psm PSMs.txt --protein Proteins.txt
+```
+
+### Check backend availability
+
+```bash
+mstrawler check
+# [OK] python: statsmodels WLS + Wald F-tests (always available)
+# [NOT AVAILABLE] r: rpy2 is required for the 'r' backend...
+```
+
+### All CLI options for `mstrawler run`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--psm` | (required) | Path to Proteome Discoverer PSM file |
+| `--protein` | `""` | Path to Protein file (optional, for gene names) |
+| `--sample` | (required) | Path to sample file (CSV) |
+| `--covariate` | (required) | Path to covariate file (CSV) |
+| `--output` / `-o` | `.` | Output directory |
+| `--backend` | `python` | `python` or `r` |
+| `--seed` | None | Random seed for reproducibility |
+| `--lod` | 0.01 | Limit of detection threshold |
+| `--min-above` | 4 | Min channels above LOD |
+| `--col-adjust` | 0.5 | SD percentile for normalization |
+| `--outlier-cutoff` | 3.0 | Outlier residual threshold |
+| `--scale-sn` | 1.0 | SNR scaling factor |
+
 ## Docker
 
 Two Docker images are provided — build both from the **repo root** (not from `python/`).
@@ -299,29 +347,26 @@ docker build -t mstrawler-python -f python/Dockerfile .
 # Run tests
 docker run --rm mstrawler-python
 
-# Run analysis on your data (mount data directory)
+# Run analysis on your data
 docker run --rm \
   -v /path/to/your/data:/data \
   -v /path/to/output:/output \
-  -w /output \
   mstrawler-python \
-  python -c "
-from mstrawler.file_converter import convert_pd_file
-from mstrawler.pipeline import ms_trawl
-import pandas as pd
+  python -m mstrawler.cli run \
+    --psm /data/PSMs.txt \
+    --protein /data/Proteins.txt \
+    --sample /data/sample_file.csv \
+    --covariate /data/covariate_file.csv \
+    --output /output \
+    --seed 42
 
-df = convert_pd_file('/data/PSMs.txt', '/data/Proteins.txt')
-sample_file = pd.read_csv('/data/sample_file.csv')
-covariate_file = pd.read_csv('/data/covariate_file.csv')
-
-ms_trawl(df, sample_file, covariate_file, seed=42, backend='python')
-"
+# Check backends
+docker run --rm mstrawler-python python -m mstrawler.cli check
 
 # Interactive Python shell
 docker run --rm -it \
   -v /path/to/your/data:/data \
-  mstrawler-python \
-  python
+  mstrawler-python python
 ```
 
 | Property | Value |
@@ -344,26 +389,18 @@ docker run --rm mstrawler-r
 docker run --rm \
   -v /path/to/your/data:/data \
   -v /path/to/output:/output \
-  -w /output \
   mstrawler-r \
-  python -c "
-from mstrawler.file_converter import convert_pd_file
-from mstrawler.pipeline import ms_trawl
-import pandas as pd
-
-df = convert_pd_file('/data/PSMs.txt', '/data/Proteins.txt')
-sample_file = pd.read_csv('/data/sample_file.csv')
-covariate_file = pd.read_csv('/data/covariate_file.csv')
-
-ms_trawl(df, sample_file, covariate_file, seed=42, backend='r')
-"
+  python -m mstrawler.cli run \
+    --psm /data/PSMs.txt \
+    --protein /data/Proteins.txt \
+    --sample /data/sample_file.csv \
+    --covariate /data/covariate_file.csv \
+    --output /output \
+    --backend r \
+    --seed 42
 
 # Check which backends are available
-docker run --rm mstrawler-r python -c "
-from mstrawler.model_fitting import check_backend
-print(check_backend('python'))
-print(check_backend('r'))
-"
+docker run --rm mstrawler-r python -m mstrawler.cli check
 ```
 
 | Property | Value |
@@ -376,26 +413,16 @@ print(check_backend('r'))
 ### Running the tutorial example in Docker
 
 ```bash
-# Using the bundled tutorial data
 docker run --rm \
   -v $(pwd)/output:/output \
-  -w /output \
   mstrawler-python \
-  python -c "
-from mstrawler.file_converter import convert_pd_file
-from mstrawler.pipeline import ms_trawl
-import pandas as pd
-
-df = convert_pd_file(
-    '/repo/data/tutorial_example/pd_example_export_PSMs.txt',
-    '/repo/data/tutorial_example/pd_example_export_Proteins.txt',
-)
-sample_file = pd.read_csv('/repo/data/tutorial_example/sample_file.csv')
-covariate_file = pd.read_csv('/repo/data/tutorial_example/covariate_file.csv')
-
-ms_trawl(df, sample_file, covariate_file, seed=42)
-print('Done! Check /output for CSV files.')
-"
+  python -m mstrawler.cli run \
+    --psm /repo/data/tutorial_example/pd_example_export_PSMs.txt \
+    --protein /repo/data/tutorial_example/pd_example_export_Proteins.txt \
+    --sample /repo/data/tutorial_example/sample_file.csv \
+    --covariate /repo/data/tutorial_example/covariate_file.csv \
+    --output /output \
+    --seed 42
 
 ls output/
 # Simple.csv  Factor_Age_Old.csv  Factor_Age_Young.csv  Time_Old.csv  Time_Young.csv  ColAdjustmentFactors.csv

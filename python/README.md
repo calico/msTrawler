@@ -334,7 +334,7 @@ docker run --rm \
   -v /path/to/your/data:/data \
   -v /path/to/output:/output \
   mstrawler-python \
-  python -m mstrawler.cli run \
+  mstrawler run \
     --psm /data/PSMs.txt \
     --protein /data/Proteins.txt \
     --sample /data/sample_file.csv \
@@ -343,7 +343,7 @@ docker run --rm \
     --seed 42
 
 # Check backends
-docker run --rm mstrawler-python python -m mstrawler.cli check
+docker run --rm mstrawler-python mstrawler check
 
 # Interactive Python shell
 docker run --rm -it \
@@ -372,7 +372,7 @@ docker run --rm \
   -v /path/to/your/data:/data \
   -v /path/to/output:/output \
   mstrawler-r \
-  python -m mstrawler.cli run \
+  mstrawler run \
     --psm /data/PSMs.txt \
     --protein /data/Proteins.txt \
     --sample /data/sample_file.csv \
@@ -382,7 +382,7 @@ docker run --rm \
     --seed 42
 
 # Check which backends are available
-docker run --rm mstrawler-r python -m mstrawler.cli check
+docker run --rm mstrawler-r mstrawler check
 ```
 
 | Property | Value |
@@ -398,7 +398,7 @@ docker run --rm mstrawler-r python -m mstrawler.cli check
 docker run --rm \
   -v $(pwd)/output:/output \
   mstrawler-python \
-  python -m mstrawler.cli run \
+  mstrawler run \
     --psm /repo/data/tutorial_example/pd_example_export_PSMs.txt \
     --protein /repo/data/tutorial_example/pd_example_export_Proteins.txt \
     --sample /repo/data/tutorial_example/sample_file.csv \
