@@ -1,6 +1,10 @@
 # Main file for analyzing isobaric tag proteomics data
 # All other code should be called from this function.
 
+# Internal constants for row marking during outlier/overflow filtering
+.MARKER_OUTLIER <- "OUTLIER_REMOVE_AT_ONCE!"
+.MARKER_TOO_MANY <- "TOO_MANY!!!"
+
 #' Analyze Proteomics Data
 #'
 #' @param DF  A dataframe containing identifiers and
@@ -122,557 +126,60 @@ msTrawl <- function(DF,
 
   # Step1.  Make sure the covariate file and sample file are consistent
   if (!is.null(covariateFile)) {
-    # FORCES ROW ORDERING OF VARIABLES TO MATCH SAMPLE FILE COLUMNS (EXCLUDING BRIDGE AND SAMPLEID)
-    covariateFile <- covariateFile[order(match(covariateFile$Covariate, colnames(sampleFile))), ]
-
-    coVector <- covariateFile$Covariate
-    sampVector <- colnames(sampleFile)
-    nMatches <- sum(coVector %in% sampVector)
-    if (nMatches < length(coVector)) {
-      stop("Error: At least one of the covariate names does not match across files.")
-    }
-  }
-
-    # Make sure there are no missing covariates
-  if (!is.null(covariateFile)) {
-    #ignore bridge channel
-    bridgeI <- grep("BRIDGE", toupper(colnames(sampleFile)))
-    if(length(bridgeI) > 0){
-      nMissing <- sum(is.na(sampleFile[-which(sampleFile[ , bridgeI] == 1) , ]))
-    }else{
-      nMissing <- sum(is.na(sampleFile))
-    }
-    
-    if (nMissing > 0) {
-      stop("Missing values are not allowed in covariates")
-    }
+    covariateFile <- .validate_covariates(covariateFile, sampleFile)
   }
   
-  # If colAdjust is a vector, add it to DF so it will be included in the filtering steps
-  if (length(colAdjust) > 1) {
-    DF$colAdjust <- colAdjust
-  }
-
-  # Remove any junk
-  if (dropReverse == TRUE) {
-    revI <- grep("##", DF$Protein.ID)
-    if (length(revI) > 0) {
-      DF <- DF[-revI, ]
-    }
-  }
-  if (dropContam == TRUE) {
-    contamI <- grep("contam", DF$Protein.ID)
-    if (length(contamI) > 0) {
-      DF <- DF[-contamI, ]
-    }
-  }
-
-  # Order the rows
-  DF <- DF[order(DF$Protein.ID, DF$Plex, DF$Peptide), ]
-
-  # Swap label columns if peptideAnalysis == TRUE
-  if (peptideAnalysis) {
-    DF$PA.Gene.Symbol <- paste0(DF$PA.Gene.Symbol, "___", DF$Protein.ID)
-    DF$Protein.ID <- DF$Peptide
-  }
-
-  # Now create the two primary quantification matrices
-  snMat <- DF[, grep("\\.Sn", colnames(DF))]
-  iMat <- DF[, grep("Adjusted", colnames(DF))]
-
-  # Make sure these have the same number of columns
-  if (ncol(snMat) != ncol(iMat)) {
-    stop("Error: The number of SNR columns
-    does not equal the number of intensity columns. Often this occurs
-    because of an unwanted column containing the string \".Sn\" in the
-                                     column name.")
-  }
-
-  # Apply ssnFilter
-  if (!is.null(ssnFilter)) {
-    lowI <- which(apply(snMat, 1, sum) < ssnFilter)
-    if (length(lowI) > 0) {
-      DF <- DF[-lowI, ]
-      snMat <- snMat[-lowI, ]
-      iMat <- iMat[-lowI, ]
-    }
-  }
-
-  # Now get rid of any rows with less than 2 non-zero intensities
-  emptyRow <- which(apply(iMat, 1, function(x) {
-    sum(x > 0, na.rm = T)
-  }) < 2)
-  if (length(emptyRow > 0)) {
-    DF <- DF[-emptyRow, ]
-    iMat <- iMat[-emptyRow, ]
-    snMat <- snMat[-emptyRow, ]
-  }
-
-
-  ###################### Deal with the LOD#################
-  lodRES <- tmtLOD(snMat, iMat, lod, minAbove, scaleSN, imputePenalty)
-  # Remove rows with too few entries above LOD
-  tooFew <- lodRES[[3]]
-  iMat <- lodRES[[1]]
-  snMat <- lodRES[[2]]
-
-  if (sum(tooFew) > 0) {
-    DF <- DF[-which(tooFew == TRUE), ]
-    iMat <- iMat[-which(tooFew == TRUE), ]
-    snMat <- snMat[-which(tooFew == TRUE), ]
-  }
-
-
-  ################## Remove outliers from protein groupings##########
-
-  # Make sure the relevant ID columns are character vectors
-  # so that replacement with peptide names does not result in NA
-  DF$Protein.ID <- as.character(DF$Protein.ID)
-  DF$Peptide <- as.character(DF$Peptide)
-  uPlex <- unique(DF$Plex)
-  uProt <- unique(DF$Protein.ID)
-  for (j in 1:length(uPlex)) {
-    for (i in 1:length(uProt)) {
-      protIndex <- which(DF$Protein.ID == uProt[i] &
-        DF$Plex == uPlex[j])
-      
-      #If the protein is missing in this plex, move on
-      if(length(protIndex) == 0){next}
-      
-      subDat <- iMat[protIndex, , drop = F]
-      subSn <- snMat[protIndex, , drop = F]
-      subPep <- DF[protIndex, "Peptide"]
-      subSSN <- apply(subSn, 1, sum)
-      
-      
-      # Create outlier indicator matrix
-      if (!is.null(outlierCutoff)) {
-        outlierMat <- findOutliers(subDat, subSn, outlierCutoff, scaleSN)
-      } else {
-        outlierMat <- matrix(0, nrow = nrow(subDat), ncol = ncol(subDat))
-      }
-
-      # Figure out which rows have outliers
-      outlierRows <- apply(outlierMat, 1, sum, na.rm = T)
-      outlierIndex <- protIndex[which(outlierRows > 0)]
-
-      # Now change the protein labels of each outlier
-      if (length(outlierIndex) > 0) {
-        if (swapProtein == TRUE) {
-          DF[outlierIndex, "Protein.ID"] <- paste0(DF[outlierIndex, "Protein.ID"], "___", DF[outlierIndex, "Peptide"])
-        } else {
-          DF[outlierIndex, "Protein.ID"] <- "OUTLIER_REMOVE_AT_ONCE!"
-        }
-      }
-
-      #Check our aggregation criteria.  
-      n_after <- length(which(outlierRows == 0))
-      if ((n_after < N_SUM & n_after > 1) |  (peptideAnalysis == TRUE & n_after > 1)) {
-        
-      newSnVec <- apply(subSn[which(outlierRows == 0), , drop=FALSE], 2, sum)
-      newFluxVec <- apply(subDat[which(outlierRows == 0), , drop=FALSE], 2, sum)
-      #Update the peptide name to indicate aggregation
-      #Keep the first non-outlier row
-      keepIndex <- protIndex[which(outlierRows == 0)][1]
-      DF[keepIndex, "Peptide"] <- paste0(DF[protIndex[1], "Peptide"], "_SUM")
-      #Update all the quant rows
-      DF[keepIndex, grep("\\.Sn", colnames(DF))] <- newSnVec
-      DF[keepIndex, grep("Adjusted", colnames(DF))] <- newFluxVec
-      snMat[keepIndex, ] <- newSnVec
-      iMat[keepIndex, ] <- newFluxVec
-      #Flag the rest of the rows for removal
-      DF[setdiff(protIndex, keepIndex), "Protein.ID"] <- "OUTLIER_REMOVE_AT_ONCE!"
-      next
-      }
-      #End peptide aggregation step
-      
-      # Limit the remaining observations to maxPep # of scans
-      if (nrow(subDat) - length(outlierIndex) > maxPep) {
-
-        # Rank order each scan, smallest to largest, within each peptide
-        # Data was ordered by protein, plex, peptide.  We are in a protein
-        # and plex loop.  So peptides should be consecutive
-        # also the unique() function returns strings in the order observed
-        listOranks <- lapply(unique(subPep), function(x) {
-          order(subSSN[which(subPep == x)], decreasing = TRUE)
-        })
-        rankVector <- do.call(c, listOranks)
-
-        # Assign outliers an unrealistically high rank
-        if (length(outlierIndex) > 0) {
-          rankVector[which(outlierRows > 0)] <- 999999
-        }
-
-        snOrder <- order(rankVector, (-1 * subSSN)) # small rank, large SSN
-
-        # Find the sub-indices of the top maxPep signals
-        bigIndex <- head(snOrder, n = maxPep)
-        # Find the indices of everything but the top maxPep
-        smallIndex <- protIndex[setdiff(snOrder, bigIndex)]
-        # Change the protein name of the small scans
-        DF[smallIndex, "Protein.ID"] <- "TOO_MANY!!!"
-      }
-    } # End protein loop
-  } # End plex loop
-
-  outlierIndex <- grep("OUTLIER_REMOVE_AT_ONCE!", DF$Protein.ID)
-  tooManyIndex <- grep("TOO_MANY!!!", DF$Protein.ID)
-  removeIndex <- union(outlierIndex, tooManyIndex)
-  if (length(removeIndex > 0)) {
-    DF <- DF[-removeIndex, ]
-    iMat <- iMat[-removeIndex, ]
-    snMat <- snMat[-removeIndex, ]
-  }
-
-
-
-  ############## Implement a global column adjustment############
-
-  if (is.null(colAdjust)) {
-    normI <- iMat
-  } else {
-    if (length(colAdjust) == 1) {
-      # Intialize boolean
-      normBool <- rep(0, nrow(iMat))
-      for (p_ in 1:length(uPlex)) {
-        # Loop through each plex to find the median
-        plexIndex <- which(DF$Plex == uPlex[p_])
-        if (length(plexIndex) <= 1) {
-          stop("You have a plex with <= 1 observation")
-        } # An error occurs, in small subsets of data,
-        # where only one observation exists in a plex.  This removes these cases
-        # from the normalization
-
-        pepSD <- apply(
-          iMat[plexIndex, ],
-          1, function(x) sd(log(x), na.rm = TRUE)
-        )
-        medSD <- quantile(pepSD, probs = colAdjust, na.rm = T)
-
-        sdI <- which(pepSD < medSD)
-
-
-        normBool[plexIndex[sdI]] <- 1
-      }
-    } else {
-      normBool <- DF$colAdjust
-    }
-
-    if (length(colRatios) < 2) {
-      ratios <- rep(1, length(uPlex) * ncol(iMat))
-    }
-    normed <- geoNorm(iMat, normBool, Plex = DF$Plex, ratios)
-    normI <- normed[[1]]
-    colnames(normI) <- paste0("norm_", colnames(normI))
-    normFacs <- normed[[2]] # Return normalization factors
-    # Write the column normalization table
-    write.csv(normFacs,
-      file = "ColAdjustmentFactors.csv",
-      row.names = FALSE
-    )
-  } # End global column adjustment
-
-  ################# Pre-processing complete. Read the covariate data##########
-
-  # Figure out what we are dealing with.
-  # First reduce the number of plexes
-  usedPlexes <- intersect(uPlex, substring(sampleFile$SampleID, 1, regexpr("_", sampleFile$SampleID) - 1))
-
-  # Is there a bridge channel?
-  nBridges <- sum(sampleFile$Bridge)
-  if (nBridges > 0) {
-    bridgeMod <- TRUE
-
-    # Quick sanity check on the number of bridge channels
-    if (nBridges != length(usedPlexes)) {
-      stop("Error: The number of plexes must match the number of bridge
-         samples.")
-    }
-  } else {
-    bridgeMod <- FALSE
-  }
-
-
-  # Initialize table names
-  tableNames <- "Simple.csv"
-
-  # Figure out the number of categorical covariates
-  # Is there a bridge column?
-  bridgeCol <- grep("BRIDGE", toupper(colnames(sampleFile)))
-  if (length(bridgeCol) > 0) {
-    coVars <- colnames(sampleFile)[-c(1, bridgeCol)]
-  } else {
-    coVars <- colnames(sampleFile)[-1]
-  }
-
-  # If sampleFile was NULL or had no covariates then set an intercept model
-  if (length(coVars) == 0) {
-    coVars <- "1"
-  }
-
-  covType <- covariateFile$Type
-  covLevel <- covariateFile$Levels
-  catIndex <- grep("FACTOR", toupper(covType))
-  n_cat <- length(catIndex)
-
-
-  # Initialize parameter for defining time table workflow
-  tParm <- ""
-
-  # Figure out the number of levels of each factor and the names
-  if (n_cat > 0) {
-    n_levels <- rep(0, length(catIndex)) # initialize vector
-    factorNames <- as.character(covariateFile$Covariate[catIndex])
-
-    # Make sure the covariate names match across files
-    if (sum(factorNames %in% colnames(sampleFile)) != length(factorNames)) {
-      stop("Error: The covariate names in the sampleFile do not match the
-         column names in the sampleFile")
-    }
-
-    levelNames <- list()
-    for (i in 1:n_cat) {
-      if (length(bridgeCol) > 0) {
-        realIndex <- which(sampleFile[, bridgeCol] == 0)
-      } else {
-        realIndex <- 1:nrow(sampleFile)
-      }
-
-      levelNames[[i]] <- as.character(unique(sampleFile[realIndex, factorNames[i]]))
-      # Remove bridge, if it was entered as a factor level
-
-      # bridgeIndex <- grep("BRIDGE", toupper(tempNames))
-      # if(length(bridgeIndex) > 0){
-      #   levelNames[[i]] <- tempNames[-bridgeIndex]
-      # }else{
-      #   levelNames[[i]] <- tempNames
-      # }
-      n_levels[i] <- length(levelNames[[i]])
-
-      # Update table names
-      tableNames <- c(tableNames, paste0(
-        "Factor_",
-        factorNames[i], "_",
-        levelNames[[i]], ".csv"
-      ))
-    } # End level loop
-  } else { # End "if" factors are present
-    n_levels <- 0
-    factorNames <- ""
-  }
-
-  # Figure out the number of continuous covariates and center them
-  contIndex <- grep("CONTINUOUS", toupper(covariateFile$Type))
-  n_cont <- length(contIndex)
-  if (n_cont > 0) {
-    contNames <- as.character(covariateFile$Covariate[contIndex])
-    tableNames <- c(tableNames, paste0("Continuous_", contNames, ".csv"))
-    for (i in 1:n_cont) {
-      sampleFile[, contNames[i]] <- sampleFile[, contNames[i]] -
-        mean(sampleFile[, contNames[i]], na.rm = T)
-    }
-  } else { # End "if" continuous
-    contNames <- ""
-  }
-
-  # Figure out time related parameters
-  timeIndex <- grep("TIME", toupper(covariateFile$Type))
-  if (length(timeIndex) > 0) {
-    # First rename the time variable for use in formulas
-    colnames(sampleFile)[grep(
-      covariateFile$Covariate[timeIndex],
-      colnames(sampleFile)
-    )] <- "Time"
-    covariateFile$Covariate[timeIndex] <- "Time"
-
-    # Make sure this variable is continuous
-    if (!is.numeric(sampleFile$Time)) {
-      stop("Error:  Your time variable is non-numeric")
-    }
-
-    # Remove Time variable from the covariate vector.
-    coVars <- coVars[-timeIndex]
-    # Start building a separate vector for time variables
-    timeVars <- NULL
-
-    # Now set the degree and circadian parameters
-    timeDegree <- covariateFile$TimeDegree[timeIndex]
-    if (timeDegree >= 1) {
-      timeVars <- c(timeVars, "Time")
-    }
-    if (timeDegree >= 2) {
-      timeVars <- c(timeVars, "Time2")
-      sampleFile$Time2 <- sampleFile$Time^2
-    }
-    if (timeDegree == 3) {
-      timeVars <- c(timeVars, "Time3")
-      sampleFile$Time3 <- sampleFile$Time^3
-    }
-    # Look for a factor that separates time trends
-    # Find position of time category in covariate file
-    tCatIndex <- which(covariateFile$TimeCategory == 1)
-    # Find position of time category in factor list
-    tCatFactorIndex <- match(covariateFile$Covariate[tCatIndex], factorNames)
-    if (length(tCatIndex) > 1) {
-      stop("Only one time category is allowed")
-    }
-    if(length(tCatIndex) == 0){
-      #Force a value greater than zero to always indicate the presence of a time category
-      tCatIndex <- 0
-      tCatFactorIndex <- 0
-    } 
-    
-    if (tCatIndex > 0) {
-      tCatName <- covariateFile$Covariate[tCatIndex]
-      timeLevelN <- n_levels[tCatFactorIndex]
-      tCatLevels <- levelNames[[tCatFactorIndex]]
-      timeTableNames <- paste0("Time_", tCatLevels, ".csv")
-      # There are three possible relevant parameterizations for time
-      tParm <- "Category"
-    } else { # This means there is no time category but there are time covariates
-      timeLevelN <- 1
-      timeTableNames <- "Time.csv"
-      if (n_cont > 0) {
-        tParm <- "Continuous"
-      } else {
-        tParm <- "Time"
-      }
-    }
-    circadian <- covariateFile$Circadian[timeIndex]
-  } else {
-    timeDegree <- 0
-    timeVars <- NULL
-    timeLevelN <- 0
-    tCatIndex <- 0
-    tCatFactorIndex <- 0
-    circadian <- 0
-    tParm <- ""
-  }
-
-  # Create circadian covariates
-  if (circadian != 0) {
-    sampleFile$Sine <- sin((2 * pi / 24) * sampleFile$Time)
-    sampleFile$Cosine <- cos((2 * pi / 24) * sampleFile$Time)
-    timeVars <- c(timeVars, "Sine", "Cosine")
-  }
-
-  # Is this a longitudinal model?
-  IDindex <- grep("ID", toupper(covariateFile$Type))
-  if (length(IDindex) > 0) {
-    IDname <- covariateFile$Covariate[IDindex]
-    randID <- IDname
-    # Remove ID variable from covariate vector
-    coVars <- coVars[-grep(IDname, coVars)]
-  } else {
-    randID <- "SampleID"
-  }
-
-  # Now create the full model formulas
-  # Start with the fixed effects
-  fixedStr <- paste0("lIntensity ~ ", paste(c(coVars, timeVars), collapse = " + "))
-
-  # If we have a time category, add interaction terms
-  if (tCatIndex > 0) {
-    fixedStr <- paste0(
-      fixedStr, " + ",
-      paste0(c(rep(paste0(tCatName, ":"), length(timeVars))),
-        timeVars,
-        collapse = " + "
-      )
-    )
-  }
-
-  fixedForm <- as.formula(fixedStr)
-
-
-
-
-  ################# Restructure the data for modeling##############
-  # Recap:  The relevant data tables are normI, snMat, and DF
-  # These must be melted and merged into a data frame with one
-  # observation per row.  Then we need to merge the table with the
-  # information in sampleFile
-
-  idVars <- DF[, c("PA.Gene.Symbol", "Protein.ID", "Peptide", "Plex")]
-  meltI <- reshape2::melt(data.frame(Scan = 1:nrow(DF), idVars, normI),
-    id.vars = c("Scan", "PA.Gene.Symbol", "Protein.ID", "Peptide", "Plex")
-  )
-  meltSn <- reshape2::melt(data.frame(Scan = 1:nrow(DF), idVars, snMat),
-    id.vars = c("Scan", "PA.Gene.Symbol", "Protein.ID", "Peptide", "Plex"),
-    value.name = "SNR", variable.name = "Channel"
-  )
-  # Extract and transform outcomes
-  meltSn$lIntensity <- log2(meltI$value)
-  meltSn$SampleID <- paste0(meltSn$Plex, "_", meltSn$Channel)
-  # This should match The sample ID in the sampleFile.
-
-  covNames <- colnames(sampleFile)[-1]
-  if (length(covNames) > 0) {
-
-    # Now map the sampleFile information into emptyCov
-    # make sure the sample ID's match
-    dataTosampFile <- match(meltSn$SampleID, sampleFile$SampleID)
-    undescribed <- which(is.na(dataTosampFile))
-    if (length(undescribed) > 0) {
-      meltSn <- meltSn[-undescribed, ]
-    }
-
-    idMatch <- match(meltSn$SampleID, sampleFile$SampleID)
-
-    sampFileToData <- match(sampleFile$SampleID, meltSn$SampleID)
-    if (sum(is.na(sampFileToData)) > 0) {
-      stop("Error: Samples listed in the sampleFile are not present in the data")
-    }
-    # now remove any samples that were not in the sampleFile
-
-    emptyCov <- as.data.frame(matrix(NA, nrow = nrow(meltSn), ncol = length(covNames)))
-    colnames(emptyCov) <- covNames
-
-    for (i in 1:length(covNames)) {
-      emptyCov[, i] <- sampleFile[idMatch, i + 1]
-    }
-
-    readyDf <- data.frame(meltSn, emptyCov)
-  } else { # If there were no covariates
-    readyDf <- meltSn
-  }
-
-  # Anything set to NA should be removed at this point
-  naIndex <- which(is.na(readyDf$lIntensity))
-  if (length(naIndex) > 0) {
-    readyDf <- readyDf[-naIndex, ]
-  }
-
-
-  # In the absence of a bridge channel (not recommended) we
-  # will align all of the scan means
-  if (bridgeMod == FALSE) {
-    # Get scan means
-    scanMean <- tapply(readyDf$lIntensity,
-      readyDf$Scan,
-      FUN = mean
-    )
-    scanFactors <- scanMean
-    readyDf$lIntensity <- readyDf$lIntensity -
-      scanFactors[match(readyDf$Scan, names(scanFactors))]
-    bridgeDat <- NULL # This gets passed into the modeling function
-  } else {
-    # Make a boolean for bridge observations
-    bridgeIDs <- sampleFile$SampleID[which(sampleFile$Bridge == 1)]
-    readyDf$Bridge <- 0
-    readyDf$Bridge[which(readyDf$SampleID %in% bridgeIDs)] <- 1
-  }
-
-  # Create names of samples to populate the results table
-  sampleNames <- levels(factor(readyDf$SampleID))
-  readyDf$Plex <- factor(readyDf$Plex)
-  # if(bridgeMod == TRUE){
-  # Bridge channels don't get estimated
-  # sampleNames <- sampleNames[-grep(bridgeChannel, sampleNames)]
-  # }#
-  # Prepare the weighting column
-  readyDf$techVar <- 1 / (scaleSN * readyDf$SNR)
-
+  # Clean input data: filter, order, extract matrices
+  cleanRes <- .clean_input_data(DF, colAdjust, dropReverse, dropContam,
+                                peptideAnalysis, ssnFilter)
+  DF <- cleanRes$DF
+  snMat <- cleanRes$snMat
+  iMat <- cleanRes$iMat
+
+
+  # Run LOD imputation, outlier detection/removal, and normalization
+  ppRes <- .preprocess_pipeline(DF, snMat, iMat, lod, minAbove, scaleSN,
+                                imputePenalty, outlierCutoff, N_SUM,
+                                swapProtein, maxPep, peptideAnalysis,
+                                colAdjust, colRatios)
+  DF <- ppRes$DF
+  snMat <- ppRes$snMat
+  normI <- ppRes$normI
+  uPlex <- ppRes$uPlex
+
+  ################# Pre-processing complete. Set up covariates and restructure ##########
+
+  # Set up covariates, factors, time variables, and model formula
+  covSetup <- .setup_covariates(sampleFile, covariateFile, uPlex)
+  sampleFile    <- covSetup$sampleFile
+  bridgeMod     <- covSetup$bridgeMod
+  bridgeCol     <- covSetup$bridgeCol
+  tableNames    <- covSetup$tableNames
+  coVars        <- covSetup$coVars
+  n_cat         <- covSetup$n_cat
+  factorNames   <- covSetup$factorNames
+  levelNames    <- covSetup$levelNames
+  n_levels      <- covSetup$n_levels
+  n_cont        <- covSetup$n_cont
+  contNames     <- covSetup$contNames
+  timeVars      <- covSetup$timeVars
+  timeDegree    <- covSetup$timeDegree
+  timeLevelN    <- covSetup$timeLevelN
+  timeTableNames <- covSetup$timeTableNames
+  tCatIndex     <- covSetup$tCatIndex
+  tCatFactorIndex <- covSetup$tCatFactorIndex
+  tCatName      <- covSetup$tCatName
+  tCatLevels    <- covSetup$tCatLevels
+  tParm         <- covSetup$tParm
+  circadian     <- covSetup$circadian
+  randID        <- covSetup$randID
+  fixedStr      <- covSetup$fixedStr
+  fixedForm     <- covSetup$fixedForm
+
+  # Restructure data for modeling (melt + merge with covariates)
+  restructRes <- .restructure_for_modeling(DF, normI, snMat, sampleFile, bridgeMod, scaleSN)
+  readyDf     <- restructRes$readyDf
+  sampleNames <- restructRes$sampleNames
 
 
   ################# Now generate the empty results tables################
@@ -1201,563 +708,60 @@ protPrep <- function(DF,
 
   # Step1.  Make sure the covariate file and sample file are consistent
   if (!is.null(covariateFile)) {
-    # FORCES ROW ORDERING OF VARIABLES TO MATCH SAMPLE FILE COLUMNS (EXCLUDING BRIDGE AND SAMPLEID)
-    covariateFile <- covariateFile[order(match(covariateFile$Covariate, colnames(sampleFile))), ]
-
-    coVector <- covariateFile$Covariate
-    sampVector <- colnames(sampleFile)
-    nMatches <- sum(coVector %in% sampVector)
-    if (nMatches < length(coVector)) {
-      stop("Error: At least one of the covariate names does not match across files.")
-    }
-  }
-
-    # Make sure there are no missing covariates
-  if (!is.null(covariateFile)) {
-    #ignore bridge channel
-    bridgeI <- grep("BRIDGE", toupper(colnames(sampleFile)))
-    if(length(bridgeI) > 0){
-      nMissing <- sum(is.na(sampleFile[-which(sampleFile[ , bridgeI] == 1) , ]))
-    }else{
-      nMissing <- sum(is.na(sampleFile))
-    }
-    
-    if (nMissing > 0) {
-      stop("Missing values are not allowed in covariates")
-    }
+    covariateFile <- .validate_covariates(covariateFile, sampleFile)
   }
   
-  # If colAdjust is a vector, add it to DF so it will be included in the filtering steps
-  if (length(colAdjust) > 1) {
-    DF$colAdjust <- colAdjust
-  }
-
-  # Remove any junk
-  if (dropReverse == TRUE) {
-    revI <- grep("##", DF$Protein.ID)
-    if (length(revI) > 0) {
-      DF <- DF[-revI, ]
-    }
-  }
-  if (dropContam == TRUE) {
-    contamI <- grep("contam", DF$Protein.ID)
-    if (length(contamI) > 0) {
-      DF <- DF[-contamI, ]
-    }
-  }
-  
-  # MSTR-137: TODO: At this point, sometimes DF$Protein.ID is an empty string.
-  # These should be be filtered out or otherwise handled at this point or before.
-
-  # Order the rows
-  DF <- DF[order(DF$Protein.ID, DF$Plex, DF$Peptide), ]
-
-  # Swap label columns if peptideAnalysis == TRUE
-  if (peptideAnalysis) {
-    DF$PA.Gene.Symbol <- paste0(DF$PA.Gene.Symbol, "___", DF$Protein.ID)
-    DF$Protein.ID <- DF$Peptide
-  }
-
-  # Now create the two primary quantification matrices
-  snMat <- DF[, grep("\\.Sn", colnames(DF))]
-  iMat <- DF[, grep("Adjusted", colnames(DF))]
-
-  # Make sure these have the same number of columns
-  if (ncol(snMat) != ncol(iMat)) {
-    stop("Error: The number of SNR columns
-    does not equal the number of intensity columns. Often this occurs
-    because of an unwanted column containing the string \".Sn\" in the
-                                     column name.")
-  }
-
-  # Apply ssnFilter
-  if (!is.null(ssnFilter)) {
-    lowI <- which(apply(snMat, 1, sum) < ssnFilter)
-    if (length(lowI) > 0) {
-      DF <- DF[-lowI, ]
-      snMat <- snMat[-lowI, ]
-      iMat <- iMat[-lowI, ]
-    }
-  }
-
-  # Now get rid of any rows with less than 2 non-zero intensities
-  emptyRow <- which(apply(iMat, 1, function(x) {
-    sum(x > 0, na.rm = T)
-  }) < 2)
-  if (length(emptyRow > 0)) {
-    DF <- DF[-emptyRow, ]
-    iMat <- iMat[-emptyRow, ]
-    snMat <- snMat[-emptyRow, ]
-  }
-
-
-  ###################### Deal with the LOD#################
-  lodRES <- tmtLOD(snMat, iMat, lod, minAbove, scaleSN, imputePenalty)
-  # Remove rows with too few entries above LOD
-  tooFew <- lodRES[[3]]
-  iMat <- lodRES[[1]]
-  snMat <- lodRES[[2]]
-
-  if (sum(tooFew) > 0) {
-    DF <- DF[-which(tooFew == TRUE), ]
-    iMat <- iMat[-which(tooFew == TRUE), ]
-    snMat <- snMat[-which(tooFew == TRUE), ]
-  }
-
-
-  ################## Remove outliers from protein groupings##########
-  
-  # Make sure the relevant ID columns are character vectors
-  # so that replacement with peptide names does not result in NA
-  DF$Protein.ID <- as.character(DF$Protein.ID)
-  DF$Peptide <- as.character(DF$Peptide)
-  uPlex <- unique(DF$Plex)
-  uProt <- unique(DF$Protein.ID)
-  for (j in 1:length(uPlex)) {
-    for (i in 1:length(uProt)) {
-      protIndex <- which(DF$Protein.ID == uProt[i] &
-                           DF$Plex == uPlex[j])
-      
-      #If the protein is missing in this plex, move on
-      if(length(protIndex) == 0){next}
-      
-      subDat <- iMat[protIndex, , drop = F]
-      subSn <- snMat[protIndex, , drop = F]
-      subPep <- DF[protIndex, "Peptide"]
-      subSSN <- apply(subSn, 1, sum)
-      
-      
-      # Create outlier indicator matrix
-      if (!is.null(outlierCutoff)) {
-        outlierMat <- findOutliers(subDat, subSn, outlierCutoff, scaleSN)
-      } else {
-        outlierMat <- matrix(0, nrow = nrow(subDat), ncol = ncol(subDat))
-      }
-      
-      # Figure out which rows have outliers
-      outlierRows <- apply(outlierMat, 1, sum, na.rm = T)
-      outlierIndex <- protIndex[which(outlierRows > 0)]
-      
-      # Now change the protein labels of each outlier
-      if (length(outlierIndex) > 0) {
-        if (swapProtein == TRUE) {
-          DF[outlierIndex, "Protein.ID"] <- paste0(DF[outlierIndex, "Protein.ID"], "___", DF[outlierIndex, "Peptide"])
-        } else {
-          DF[outlierIndex, "Protein.ID"] <- "OUTLIER_REMOVE_AT_ONCE!"
-        }
-      }
-      
-      #Check our aggregation criteria.  
-      n_after <- length(which(outlierRows == 0))
-      if ((n_after < N_SUM & n_after > 1) | (peptideAnalysis == TRUE & n_after > 1)) {
-        
-        newSnVec <- apply(subSn[which(outlierRows == 0), , drop=FALSE], 2, sum)
-        newFluxVec <- apply(subDat[which(outlierRows == 0), , drop=FALSE], 2, sum)
-        #Update the peptide name to indicate aggregation
-        #Keep the first non-outlier row
-        keepIndex <- protIndex[which(outlierRows == 0)][1]
-        DF[keepIndex, "Peptide"] <- paste0(DF[protIndex[1], "Peptide"], "_SUM")
-        #Update all the quant rows
-        DF[keepIndex, grep("\\.Sn", colnames(DF))] <- newSnVec
-        DF[keepIndex, grep("Adjusted", colnames(DF))] <- newFluxVec
-        snMat[keepIndex, ] <- newSnVec
-        iMat[keepIndex, ] <- newFluxVec
-        #Flag the rest of the rows for removal
-        DF[setdiff(protIndex, keepIndex), "Protein.ID"] <- "OUTLIER_REMOVE_AT_ONCE!"
-        next
-      }
-      #End peptide aggregation step
-      
-      # Limit the remaining observations to maxPep # of scans
-      if (nrow(subDat) - length(outlierIndex) > maxPep) {
-        
-        # Rank order each scan, smallest to largest, within each peptide
-        # Data was ordered by protein, plex, peptide.  We are in a protein
-        # and plex loop.  So peptides should be consecutive
-        # also the unique() function returns strings in the order observed
-        listOranks <- lapply(unique(subPep), function(x) {
-          order(subSSN[which(subPep == x)], decreasing = TRUE)
-        })
-        rankVector <- do.call(c, listOranks)
-        
-        # Assign outliers an unrealistically high rank
-        if (length(outlierIndex) > 0) {
-          rankVector[which(outlierRows > 0)] <- 999999
-        }
-        
-        snOrder <- order(rankVector, (-1 * subSSN)) # small rank, large SSN
-        
-        # Find the sub-indices of the top maxPep signals
-        bigIndex <- head(snOrder, n = maxPep)
-        # Find the indices of everything but the top maxPep
-        smallIndex <- protIndex[setdiff(snOrder, bigIndex)]
-        # Change the protein name of the small scans
-        DF[smallIndex, "Protein.ID"] <- "TOO_MANY!!!"
-      }
-    } # End protein loop
-  } # End plex loop
-  
-
-  outlierIndex <- grep("OUTLIER_REMOVE_AT_ONCE!", DF$Protein.ID)
-  tooManyIndex <- grep("TOO_MANY!!!", DF$Protein.ID)
-  removeIndex <- union(outlierIndex, tooManyIndex)
-  if (length(removeIndex > 0)) {
-    DF <- DF[-removeIndex, ]
-    iMat <- iMat[-removeIndex, ]
-    snMat <- snMat[-removeIndex, ]
-  }
-
-
-
-
-  ############## Implement a global column adjustment############
-
-  if (is.null(colAdjust)) {
-    normI <- iMat
-  } else {
-    if (length(colAdjust) == 1) {
-      # Intialize boolean
-      normBool <- rep(0, nrow(iMat))
-      for (p_ in 1:length(uPlex)) {
-        # Loop through each plex to find the median
-        plexIndex <- which(DF$Plex == uPlex[p_])
-        if (length(plexIndex) <= 1) {
-          stop("You have a plex with <= 1 observation")
-        } # An error occurs, in small subsets of data,
-        # where only one observation exists in a plex.  This removes these cases
-        # from the normalization
-
-        pepSD <- apply(
-          iMat[plexIndex, ],
-          1, function(x) sd(log(x), na.rm = TRUE)
-        )
-        medSD <- quantile(pepSD, probs = colAdjust, na.rm = T)
-
-        sdI <- which(pepSD < medSD)
-
-
-        normBool[plexIndex[sdI]] <- 1
-      } # End plex for loop
-    } else {
-      normBool <- DF$colAdjust
-    }
-
-    if (length(colRatios) < 2) {
-      ratios <- rep(1, length(uPlex) * ncol(iMat))
-    }
-    normed <- geoNorm(iMat, normBool, Plex = DF$Plex, ratios)
-    normI <- normed[[1]]
-    colnames(normI) <- paste0("norm_", colnames(normI))
-    normFacs <- normed[[2]] # Return normalization factors
-    # Write the column normalization table
-    write.csv(normFacs,
-      file = "ColAdjustmentFactors.csv",
-      row.names = FALSE
-    )
-  } # End global column adjustment
-
-  ################# Pre-processing complete. Read the covariate data##########
-
-  # Figure out what we are dealing with.
-
-  # First reduce the number of plexes
-  usedPlexes <- intersect(uPlex, substring(sampleFile$SampleID, 1, regexpr("_", sampleFile$SampleID) - 1))
-
-  # Is there a bridge channel?
-  nBridges <- sum(sampleFile$Bridge)
-  if (nBridges > 0) {
-    bridgeMod <- TRUE
-
-    # Quick sanity check on the number of bridge channels
-    if (nBridges != length(usedPlexes)) {
-      stop("Error: The number of plexes must match the number of bridge
-         samples.")
-    }
-  } else {
-    bridgeMod <- FALSE
-  }
-
-  # Initialize table names
-  tableNames <- "Simple.csv"
-
-  # Figure out the number of categorical covariates
-  # Is there a bridge column?
-  bridgeCol <- grep("BRIDGE", toupper(colnames(sampleFile)))
-  if (length(bridgeCol) > 0) {
-    coVars <- colnames(sampleFile)[-c(1, bridgeCol)]
-  } else {
-    coVars <- colnames(sampleFile)[-1]
-  }
-
-  # If sampleFile was NULL or had no covariates then set an intercept model
-  if (length(coVars) == 0) {
-    coVars <- "1"
-  }
-
-  covType <- covariateFile$Type
-  covLevel <- covariateFile$Levels
-  catIndex <- grep("FACTOR", toupper(covType))
-  n_cat <- length(catIndex)
-
-
-  # Initialize parameter for defining time table workflow
-  tParm <- ""
-
-  # Figure out the number of levels of each factor and the names
-  if (n_cat > 0) {
-    n_levels <- rep(0, length(catIndex)) # initialize vector
-    factorNames <- as.character(covariateFile$Covariate[catIndex])
-
-    # Make sure the covariate names match across files
-    if (sum(factorNames %in% colnames(sampleFile)) != length(factorNames)) {
-      stop("Error: The covariate names in the sampleFile do not match the
-         column names in the sampleFile")
-    }
-
-    levelNames <- list()
-    for (i in 1:n_cat) {
-      if (length(bridgeCol) > 0) {
-        realIndex <- which(sampleFile[, bridgeCol] == 0)
-      } else {
-        realIndex <- 1:nrow(sampleFile)
-      }
-
-      levelNames[[i]] <- as.character(unique(sampleFile[realIndex, factorNames[i]]))
-      n_levels[i] <- length(levelNames[[i]])
-
-      # Update table names
-      tableNames <- c(tableNames, paste0(
-        "Factor_",
-        factorNames[i], "_",
-        levelNames[[i]], ".csv"
-      ))
-    } # End level loop
-  } else { # End "if" factors are present
-    n_levels <- 0
-    factorNames <- ""
-    levelNames <- NULL
-  }
-
-  # Figure out the number of continuous covariates and center them
-  contIndex <- grep("CONTINUOUS", toupper(covariateFile$Type))
-  n_cont <- length(contIndex)
-  if (n_cont > 0) {
-    contNames <- as.character(covariateFile$Covariate[contIndex])
-    tableNames <- c(tableNames, paste0("Continuous_", contNames, ".csv"))
-    for (i in 1:n_cont) {
-      sampleFile[, contNames[i]] <- sampleFile[, contNames[i]] -
-        mean(sampleFile[, contNames[i]], na.rm = T)
-    }
-  } else { # End "if" continuous
-    contNames <- ""
-  }
-  # Figure out time related parameters
-  timeIndex <- grep("TIME", toupper(covariateFile$Type))
-  if (length(timeIndex) > 0) {
-    # First rename the time variable for use in formulas
-    colnames(sampleFile)[grep(
-      covariateFile$Covariate[timeIndex],
-      colnames(sampleFile)
-    )] <- "Time"
-    covariateFile$Covariate[timeIndex] <- "Time"
-
-    # Make sure this variable is continuous
-    if (!is.numeric(sampleFile$Time)) {
-      stop("Error:  Your time variable is non-numeric")
-    }
-
-    # Remove Time variable from the covariate vector.
-    coVars <- coVars[-timeIndex]
-    # Start building a separate vector for time variables
-    timeVars <- NULL
-
-    # Now set the degree and circadian parameters
-    timeDegree <- covariateFile$TimeDegree[timeIndex]
-    if (timeDegree >= 1) {
-      timeVars <- c(timeVars, "Time")
-    }
-    if (timeDegree >= 2) {
-      timeVars <- c(timeVars, "Time2")
-      sampleFile$Time2 <- sampleFile$Time^2
-    }
-    if (timeDegree >= 3) {
-      timeVars <- c(timeVars, "Time3")
-      sampleFile$Time3 <- sampleFile$Time^3
-    }
-    # Look for a factor that separates time trends
-    # Find position of time category in covariate file
-    tCatIndex <- which(covariateFile$TimeCategory == 1)
-    # Find position of time category in factor list
-    tCatFactorIndex <- match(covariateFile$Covariate[tCatIndex], factorNames)
-    if (length(tCatIndex) > 1) {
-      stop("Only one time category is allowed")
-    }
-    
-    if(length(tCatIndex) == 0){
-      #Force a value greater than zero to always indicate the presence of a time category
-      tCatIndex <- 0
-      tCatFactorIndex <- 0
-    } 
-    
-    if (tCatIndex > 0) {
-      tCatName <- covariateFile$Covariate[tCatIndex]
-      timeLevelN <- n_levels[tCatFactorIndex]
-      tCatLevels <- levelNames[[tCatFactorIndex]]
-      timeTableNames <- paste0("Time_", tCatLevels, ".csv")
-      # There are three possible relevant parameterizations for time
-      tParm <- "Category"
-    } else { # This means there is no time category but there are time covariates
-      timeLevelN <- 1
-      timeTableNames <- "Time.csv"
-      if (n_cont > 0) {
-        tParm <- "Continuous"
-      } else {
-        tParm <- "Time"
-      }
-    tCatName <- NULL
-    tCatLevels <- NULL
-    }
-    circadian <- covariateFile$Circadian[timeIndex]
-  } else { # No time related covariates
-    timeDegree <- 0
-    timeVars <- NULL
-    timeLevelN <- 0
-    tCatIndex <- 0
-    tCatFactorIndex <- 0
-    circadian <- 0
-    tParm <- ""
-    timeTableNames <- NULL
-    tCatName <- NULL
-    tCatLevels <- NULL
-  }
-
-  # Create circadian covariates
-  if (circadian != 0) {
-    sampleFile$Sine <- sin((2 * pi / 24) * sampleFile$Time)
-    sampleFile$Cosine <- cos((2 * pi / 24) * sampleFile$Time)
-    timeVars <- c(timeVars, "Sine", "Cosine")
-  }
-
-  # Is this a longitudinal model?
-  IDindex <- grep("ID", toupper(covariateFile$Type))
-  if (length(IDindex) > 0) {
-    IDname <- covariateFile$Covariate[IDindex]
-    randID <- IDname
-    # Remove ID variable from covariate vector
-    coVars <- coVars[-grep(IDname, coVars)]
-  } else {
-    randID <- "SampleID"
-  }
-
-  # Now create the full model formulas
-  # Start with the fixed effects
-  fixedStr <- paste0("lIntensity ~ ", paste(c(coVars, timeVars), collapse = " + "))
-
-  # If we have a time category, add interaction terms
-  if (tCatIndex > 0) {
-    fixedStr <- paste0(
-      fixedStr, " + ",
-      paste0(c(rep(paste0(tCatName, ":"), length(timeVars))),
-        timeVars,
-        collapse = " + "
-      )
-    )
-  }
-
-  fixedForm <- as.formula(fixedStr)
-
-
-
-
-  ################# Restructure the data for modeling##############
-  # Recap:  The relevant data tables are normI, snMat, and DF
-  # These must be melted and merged into a data frame with one
-  # observation per row.  Then we need to merge the table with the
-  # information in sampleFile
-
-  idVars <- DF[, c("PA.Gene.Symbol", "Protein.ID", "Peptide", "Plex")]
-  meltI <- reshape2::melt(data.frame(Scan = 1:nrow(DF), idVars, normI),
-    id.vars = c("Scan", "PA.Gene.Symbol", "Protein.ID", "Peptide", "Plex")
-  )
-
-  meltSn <- reshape2::melt(data.frame(Scan = 1:nrow(DF), idVars, snMat),
-    id.vars = c("Scan", "PA.Gene.Symbol", "Protein.ID", "Peptide", "Plex"),
-    value.name = "SNR", variable.name = "Channel"
-  )
-  # Extract and transform outcomes
-  meltSn$lIntensity <- log2(meltI$value)
-  meltSn$SampleID <- paste0(meltSn$Plex, "_", meltSn$Channel)
-  # This should match The sample ID in the sampleFile.
-
-  covNames <- colnames(sampleFile)[-1]
-  if (length(covNames) > 0) {
-
-
-
-    # Now map the sampleFile information into emptyCov
-    # make sure the sample ID's match
-    dataTosampFile <- match(meltSn$SampleID, sampleFile$SampleID)
-    undescribed <- which(is.na(dataTosampFile))
-    if (length(undescribed) > 0) {
-      meltSn <- meltSn[-undescribed, ]
-    }
-
-    idMatch <- match(meltSn$SampleID, sampleFile$SampleID)
-
-    sampFileToData <- match(sampleFile$SampleID, meltSn$SampleID)
-    if (sum(is.na(sampFileToData)) > 0) {
-      stop("Error: Samples listed in the sampleFile are not present in the data")
-    }
-    # now remove any samples that were not in the sampleFile
-
-    emptyCov <- as.data.frame(matrix(NA, nrow = nrow(meltSn), ncol = length(covNames)))
-    colnames(emptyCov) <- covNames
-
-    for (i in 1:length(covNames)) {
-      emptyCov[, i] <- sampleFile[idMatch, i + 1]
-    }
-
-    readyDf <- data.frame(meltSn, emptyCov)
-  } else { # If there were no covariates
-    readyDf <- meltSn
-  }
-
-  # Anything set to NA should be removed at this point
-  naIndex <- which(is.na(readyDf$lIntensity))
-  if (length(naIndex) > 0) {
-    readyDf <- readyDf[-naIndex, ]
-  }
-
-
-  # In the absence of a bridge channel (not recommended) we
-  # will align all of the scan means
-  if (bridgeMod == FALSE) {
-    # Get scan means
-    scanMean <- tapply(readyDf$lIntensity,
-      readyDf$Scan,
-      FUN = mean
-    )
-    scanFactors <- scanMean
-    readyDf$lIntensity <- readyDf$lIntensity -
-      scanFactors[match(readyDf$Scan, names(scanFactors))]
-    bridgeDat <- NULL # This gets passed into the modeling function
-  } else {
-    # Make a boolean for bridge observations
-    bridgeIDs <- sampleFile$SampleID[which(sampleFile$Bridge == 1)]
-    readyDf$Bridge <- 0
-    readyDf$Bridge[which(readyDf$SampleID %in% bridgeIDs)] <- 1
-  }
-
-  # Create names of samples to populate the results table
-  sampleNames <- levels(factor(readyDf$SampleID))
-  readyDf$Plex <- factor(readyDf$Plex)
-  # if(bridgeMod == TRUE){
-  # Bridge channels don't get estimated
-  # sampleNames <- sampleNames[-grep(bridgeChannel, sampleNames)]
-  # }
-  # Prepare the weighting column
-  readyDf$techVar <- 1 / (scaleSN * readyDf$SNR)
-
+  # Clean input data: filter, order, extract matrices
+  cleanRes <- .clean_input_data(DF, colAdjust, dropReverse, dropContam,
+                                peptideAnalysis, ssnFilter)
+  DF <- cleanRes$DF
+  snMat <- cleanRes$snMat
+  iMat <- cleanRes$iMat
+
+
+  # Run LOD imputation, outlier detection/removal, and normalization
+  ppRes <- .preprocess_pipeline(DF, snMat, iMat, lod, minAbove, scaleSN,
+                                imputePenalty, outlierCutoff, N_SUM,
+                                swapProtein, maxPep, peptideAnalysis,
+                                colAdjust, colRatios)
+  DF <- ppRes$DF
+  snMat <- ppRes$snMat
+  normI <- ppRes$normI
+  uPlex <- ppRes$uPlex
+
+  ################# Pre-processing complete. Set up covariates and restructure ##########
+
+  # Set up covariates, factors, time variables, and model formula
+  covSetup <- .setup_covariates(sampleFile, covariateFile, uPlex)
+  sampleFile    <- covSetup$sampleFile
+  bridgeMod     <- covSetup$bridgeMod
+  bridgeCol     <- covSetup$bridgeCol
+  tableNames    <- covSetup$tableNames
+  coVars        <- covSetup$coVars
+  n_cat         <- covSetup$n_cat
+  factorNames   <- covSetup$factorNames
+  levelNames    <- covSetup$levelNames
+  n_levels      <- covSetup$n_levels
+  n_cont        <- covSetup$n_cont
+  contNames     <- covSetup$contNames
+  timeVars      <- covSetup$timeVars
+  timeDegree    <- covSetup$timeDegree
+  timeLevelN    <- covSetup$timeLevelN
+  timeTableNames <- covSetup$timeTableNames
+  tCatIndex     <- covSetup$tCatIndex
+  tCatFactorIndex <- covSetup$tCatFactorIndex
+  tCatName      <- covSetup$tCatName
+  tCatLevels    <- covSetup$tCatLevels
+  tParm         <- covSetup$tParm
+  circadian     <- covSetup$circadian
+  randID        <- covSetup$randID
+  fixedStr      <- covSetup$fixedStr
+  fixedForm     <- covSetup$fixedForm
+
+  # Restructure data for modeling (melt + merge with covariates)
+  restructRes <- .restructure_for_modeling(DF, normI, snMat, sampleFile, bridgeMod, scaleSN)
+  readyDf     <- restructRes$readyDf
+  sampleNames <- restructRes$sampleNames
 
 
   # Now split up readyDf to create subsets for parallel analysis
