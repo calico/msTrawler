@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: mstrawler
-Version: 0.1.dev3+g0313e2bea
+Version: 0.1.dev4+g8c681be15
 Summary: Peptide-level modeling of protein associations from multiplexed proteomics data
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
