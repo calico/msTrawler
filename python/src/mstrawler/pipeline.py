@@ -9,7 +9,7 @@ import pandas as pd
 
 from .covariate_setup import CovariateConfig, setup_covariates
 from .file_converter import convert_pd_file
-from .model_fitting import adapt_model
+from .model_fitting import adapt_model, check_backend
 from .preprocessing import find_outliers, geo_norm, tmt_lod
 from .restructure import restructure_for_modeling
 from .results import init_result_tables, write_result_tables
@@ -40,11 +40,26 @@ def ms_trawl(
     min_re: int = 5,
     time_diff: bool = True,
     seed: int | None = None,
+    backend: str = "python",
 ) -> None:
     """Run the full msTrawler analysis pipeline.
 
+    Args:
+        backend: Model fitting backend. Options:
+            - "python" (default): pure Python using statsmodels WLS + Wald F-tests.
+              No R dependency. Best for production/deployment.
+            - "r": uses R's lme4 + pbkrtest via rpy2 for mixed-effects models
+              and Kenward-Roger tests. Requires R + rpy2 + R packages.
+              Best for small-sample experiments and publication-quality statistics.
+
     Outputs CSV files to the current working directory.
     """
+    # Validate backend
+    status = check_backend(backend)
+    if not status["available"]:
+        raise RuntimeError(
+            f"Backend '{backend}' is not available: {status['details']}"
+        )
     rng = np.random.default_rng(seed)
 
     # Validate covariates
@@ -85,6 +100,7 @@ def ms_trawl(
     table_list, time_tables = _run_protein_models(
         ready_df, u_prot, table_list, time_tables,
         cov, sample_names, scale_sn, min_re, time_diff,
+        backend=backend,
     )
 
     # Write results with FDR
@@ -275,6 +291,7 @@ def _preprocess_pipeline(
 def _run_protein_models(
     ready_df, u_prot, table_list, time_tables,
     cov: CovariateConfig, sample_names, scale_sn, min_re, time_diff,
+    backend: str = "python",
 ):
     """Per-protein modeling loop."""
     for prot_idx, prot_id in enumerate(u_prot):
@@ -292,6 +309,7 @@ def _run_protein_models(
         res = adapt_model(
             not_bridge, "None", cov.fixed_str, bridge_dat, cov.t_parm,
             None, sample_names, min_re, cov.rand_id, False, False,
+            backend=backend,
         )
         if res is not None:
             estimates, _, model_type = res
@@ -315,6 +333,7 @@ def _run_protein_models(
                     res = adapt_model(
                         not_bridge, "Factor", cov.fixed_str, bridge_dat, cov.t_parm,
                         None, full_cols, min_re, cov.rand_id, False, True,
+                        backend=backend,
                     )
                     if res is not None and tab_index < len(table_list):
                         estimates, time_res, model_type = res
@@ -331,6 +350,7 @@ def _run_protein_models(
             res = adapt_model(
                 not_bridge, "Continuous", cov.fixed_str, bridge_dat, cov.t_parm,
                 None, cont_cols, min_re, cov.rand_id, False, True,
+                backend=backend,
             )
             if res is not None:
                 estimates, _, model_type = res
@@ -347,6 +367,7 @@ def _run_protein_models(
             res = adapt_model(
                 not_bridge, "Time", cov.fixed_str, bridge_dat, cov.t_parm,
                 lht_list, cov.time_vars or [], min_re, cov.rand_id, False, True,
+                backend=backend,
             )
             if res is not None:
                 _, time_res, model_type = res

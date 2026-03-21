@@ -9,5 +9,5 @@ pytest-cov>=4.0
 ruff>=0.4
 black>=24.0
 
-[mixed]
-pymer4>=0.8
+[r]
+rpy2>=3.5

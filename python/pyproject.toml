@@ -16,8 +16,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mixed = [
-    "pymer4>=0.8",
+r = [
+    "rpy2>=3.5",
 ]
 dev = [
     "pytest>=7.0",
