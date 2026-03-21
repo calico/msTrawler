@@ -268,19 +268,138 @@ Future enhancements to the model-fitting layer:
 
 3. **Bootstrap p-values** — resample-based inference as a backend-agnostic alternative to both KR and Wald tests.
 
+## Docker
+
+Two Docker images are provided — build both from the **repo root** (not from `python/`).
+
+### Pure Python image (no R)
+
+```bash
+# Build
+docker build -t mstrawler-python -f python/Dockerfile .
+
+# Run tests
+docker run --rm mstrawler-python
+
+# Run analysis on your data (mount data directory)
+docker run --rm \
+  -v /path/to/your/data:/data \
+  -v /path/to/output:/output \
+  -w /output \
+  mstrawler-python \
+  python -c "
+from mstrawler.file_converter import convert_pd_file
+from mstrawler.pipeline import ms_trawl
+import pandas as pd
+
+df = convert_pd_file('/data/PSMs.txt', '/data/Proteins.txt')
+sample_file = pd.read_csv('/data/sample_file.csv')
+covariate_file = pd.read_csv('/data/covariate_file.csv')
+
+ms_trawl(df, sample_file, covariate_file, seed=42, backend='python')
+"
+
+# Interactive Python shell
+docker run --rm -it \
+  -v /path/to/your/data:/data \
+  mstrawler-python \
+  python
+```
+
+| Property | Value |
+|----------|-------|
+| Base image | `python:3.12-slim` |
+| Size | ~300 MB |
+| Backend | `"python"` only |
+| R required | No |
+
+### Python + R image (both backends)
+
+```bash
+# Build (takes longer — installs R + lme4 + pbkrtest)
+docker build -t mstrawler-r -f python/Dockerfile.r .
+
+# Run tests
+docker run --rm mstrawler-r
+
+# Run analysis with R backend
+docker run --rm \
+  -v /path/to/your/data:/data \
+  -v /path/to/output:/output \
+  -w /output \
+  mstrawler-r \
+  python -c "
+from mstrawler.file_converter import convert_pd_file
+from mstrawler.pipeline import ms_trawl
+import pandas as pd
+
+df = convert_pd_file('/data/PSMs.txt', '/data/Proteins.txt')
+sample_file = pd.read_csv('/data/sample_file.csv')
+covariate_file = pd.read_csv('/data/covariate_file.csv')
+
+ms_trawl(df, sample_file, covariate_file, seed=42, backend='r')
+"
+
+# Check which backends are available
+docker run --rm mstrawler-r python -c "
+from mstrawler.model_fitting import check_backend
+print(check_backend('python'))
+print(check_backend('r'))
+"
+```
+
+| Property | Value |
+|----------|-------|
+| Base image | `python:3.12-slim` + R |
+| Size | ~1.5 GB |
+| Backend | Both `"python"` and `"r"` |
+| R required | Included in image |
+
+### Running the tutorial example in Docker
+
+```bash
+# Using the bundled tutorial data
+docker run --rm \
+  -v $(pwd)/output:/output \
+  -w /output \
+  mstrawler-python \
+  python -c "
+from mstrawler.file_converter import convert_pd_file
+from mstrawler.pipeline import ms_trawl
+import pandas as pd
+
+df = convert_pd_file(
+    '/repo/data/tutorial_example/pd_example_export_PSMs.txt',
+    '/repo/data/tutorial_example/pd_example_export_Proteins.txt',
+)
+sample_file = pd.read_csv('/repo/data/tutorial_example/sample_file.csv')
+covariate_file = pd.read_csv('/repo/data/tutorial_example/covariate_file.csv')
+
+ms_trawl(df, sample_file, covariate_file, seed=42)
+print('Done! Check /output for CSV files.')
+"
+
+ls output/
+# Simple.csv  Factor_Age_Old.csv  Factor_Age_Young.csv  Time_Old.csv  Time_Young.csv  ColAdjustmentFactors.csv
+```
+
 ## Project Structure
 
 ```
 python/
 ├── pyproject.toml                     # Package metadata and dependencies
 ├── README.md                          # This file
+├── Dockerfile                         # Pure Python image (no R)
+├── Dockerfile.r                       # Python + R image (both backends)
 ├── src/mstrawler/
 │   ├── __init__.py                    # Package version
 │   ├── file_converter.py              # Proteome Discoverer → DataFrame
 │   ├── preprocessing.py               # LOD imputation, normalization, outliers
 │   ├── covariate_setup.py             # Factor/time/circadian configuration
 │   ├── restructure.py                 # Wide → long data reshaping
-│   ├── model_fitting.py               # Per-protein WLS + hypothesis tests
+│   ├── model_fitting.py               # Backend dispatcher (python/r)
+│   ├── model_fitting_python.py        # Pure Python backend (statsmodels WLS)
+│   ├── model_fitting_r.py             # R backend (lme4 via rpy2)
 │   ├── results.py                     # Table initialization, FDR, CSV output
 │   └── pipeline.py                    # ms_trawl() orchestrator
 └── tests/
