@@ -1,0 +1,2 @@
+[console_scripts]
+mstrawler = mstrawler.cli:main

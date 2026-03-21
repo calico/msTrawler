@@ -1,6 +1,9 @@
+Dockerfile
+Dockerfile.r
 README.md
 pyproject.toml
 src/mstrawler/__init__.py
+src/mstrawler/cli.py
 src/mstrawler/covariate_setup.py
 src/mstrawler/file_converter.py
 src/mstrawler/model_fitting.py
@@ -13,12 +16,15 @@ src/mstrawler/results.py
 src/mstrawler.egg-info/PKG-INFO
 src/mstrawler.egg-info/SOURCES.txt
 src/mstrawler.egg-info/dependency_links.txt
+src/mstrawler.egg-info/entry_points.txt
 src/mstrawler.egg-info/requires.txt
 src/mstrawler.egg-info/top_level.txt
 src/mstrawler/__pycache__/__init__.cpython-312.pyc
 src/mstrawler/__pycache__/covariate_setup.cpython-312.pyc
 src/mstrawler/__pycache__/file_converter.cpython-312.pyc
 src/mstrawler/__pycache__/model_fitting.cpython-312.pyc
+src/mstrawler/__pycache__/model_fitting_python.cpython-312.pyc
+src/mstrawler/__pycache__/model_fitting_r.cpython-312.pyc
 src/mstrawler/__pycache__/pipeline.cpython-312.pyc
 src/mstrawler/__pycache__/preprocessing.cpython-312.pyc
 src/mstrawler/__pycache__/restructure.cpython-312.pyc
