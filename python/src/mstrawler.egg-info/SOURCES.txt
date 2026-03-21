@@ -1,0 +1,8 @@
+pyproject.toml
+src/mstrawler/__init__.py
+src/mstrawler/file_converter.py
+src/mstrawler.egg-info/PKG-INFO
+src/mstrawler.egg-info/SOURCES.txt
+src/mstrawler.egg-info/dependency_links.txt
+src/mstrawler.egg-info/requires.txt
+src/mstrawler.egg-info/top_level.txt

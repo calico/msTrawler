@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: mstrawler
+Version: 0.1.dev3+g0313e2bea
+Summary: Peptide-level modeling of protein associations from multiplexed proteomics data
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.24
+Requires-Dist: pandas>=2.0
+Requires-Dist: scipy>=1.10
+Requires-Dist: statsmodels>=0.14
+Provides-Extra: mixed
+Requires-Dist: pymer4>=0.8; extra == "mixed"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0; extra == "dev"
+Requires-Dist: ruff>=0.4; extra == "dev"
+Requires-Dist: black>=24.0; extra == "dev"
