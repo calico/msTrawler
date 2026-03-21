@@ -556,3 +556,435 @@
 
   list(readyDf = readyDf, sampleNames = sampleNames)
 }
+
+
+#' Initialize empty results tables for protein modeling output.
+#' @return list(tableList, timeTables, uProt, uGene, n_prot)
+#' @keywords internal
+.init_result_tables <- function(readyDf, sampleNames, n_cat, factorNames,
+                                levelNames, n_levels, n_cont, contNames,
+                                timeLevelN, timeVars, tCatLevels) {
+  uProt <- unique(readyDf$Protein.ID)
+  uGene <- readyDf$PA.Gene.Symbol[match(uProt, readyDf$Protein.ID)]
+  n_prot <- length(uProt)
+
+  n_tables <- 1 + sum(n_levels) + n_cont
+
+  tableList <- list()
+
+  # Generate the sample estimate table
+  resCols <- 3 * length(sampleNames)
+  tempTab <- data.frame(
+    uGene, uProt, rep(NA, length(uGene)),
+    matrix(NA, nrow = length(uProt), ncol = resCols)
+  )
+  colnames(tempTab) <- c(
+    "Gene", "Protein", "modelFit",
+    paste0(
+      rep(c("lower_", "est_", "upper_"), length(sampleNames)),
+      rep(sampleNames, each = 3)
+    )
+  )
+  tableList[[1]] <- tempTab
+
+  # Generate any factor tables
+  tabIndex <- 2
+
+  if (n_cat > 0) {
+    for (i in 1:length(factorNames)) {
+      levelN <- length(levelNames[[i]])
+      for (j in 1:levelN) {
+        resCols <- 3 * (levelN - 1)
+        tempTab <- data.frame(
+          uGene, uProt, rep(NA, length(uGene)),
+          matrix(NA, nrow = length(uProt), ncol = resCols)
+        )
+        colnames(tempTab) <- c(
+          "Gene", "Protein", "modelFit",
+          paste0(
+            rep(c("Est_", "Pval_", "Qval_"), length(levelN - 1)),
+            rep(levelNames[[i]][-j], each = 3)
+          )
+        )
+        tableList[[tabIndex]] <- tempTab
+        tabIndex <- tabIndex + 1
+      }
+    }
+  }
+
+  # Generate tables for continuous covariates
+  if (n_cont > 0) {
+    for (i in 1:length(contNames)) {
+      tempTab <- data.frame(
+        uGene, uProt, rep(NA, length(uGene)),
+        matrix(NA, nrow = length(uProt), ncol = 3)
+      )
+      colnames(tempTab) <- c(
+        "Gene", "Protein", "modelFit",
+        paste0(
+          c("Est_", "Pval_", "Qval_"),
+          contNames[i]
+        )
+      )
+      tableList[[tabIndex]] <- tempTab
+      tabIndex <- tabIndex + 1
+    }
+  }
+
+  # Generate time tables
+  timeTables <- list()
+  timeTabIndex <- 1
+  if (timeLevelN > 0) {
+    nParams <- length(timeVars)
+
+    if (timeLevelN == 1) {
+      nTests <- 1
+      tempTab <- data.frame(
+        uGene, uProt, rep(NA, length(uGene)),
+        matrix(NA,
+          nrow = length(uProt),
+          ncol = nParams + nTests * 2
+        )
+      )
+      colStr <- c("Gene", "Protein", "modelFit", timeVars, "Pval_Time", "Qval_Time")
+      colnames(tempTab) <- colStr
+      timeTables[[timeTabIndex]] <- tempTab
+      timeTabIndex <- timeTabIndex + 1
+    } else {
+      nTests <- timeLevelN
+      for (l_ in 1:timeLevelN) {
+        tempTab <- data.frame(
+          uGene, uProt, rep(NA, length(uGene)),
+          matrix(NA,
+            nrow = length(uProt),
+            ncol = nParams + nTests * 2
+          )
+        )
+        colStr <- c(
+          "Gene", "Protein", "modelFit", timeVars,
+          paste0(
+            rep(c("Pval_Time_", "Qval_Time_"), length(timeLevelN)),
+            rep(c("REF", tCatLevels[-l_]), each = 2)
+          )
+        )
+        colnames(tempTab) <- colStr
+        timeTables[[timeTabIndex]] <- tempTab
+        timeTabIndex <- timeTabIndex + 1
+      }
+    }
+  }
+
+  list(tableList = tableList, timeTables = timeTables,
+       uProt = uProt, uGene = uGene, n_prot = n_prot)
+}
+
+
+#' Write result tables to CSV, optionally applying FDR correction.
+#' @param applyFDR If TRUE, apply p.adjust(method="fdr") to Q-value columns.
+#' @param suffix If non-NULL, append "___suffix" to filenames (for parallel subsets).
+#' @keywords internal
+.write_result_tables <- function(tableList, tableNames, timeTables, timeTableNames,
+                                 applyFDR = TRUE, suffix = NULL) {
+  for (z_ in 1:length(tableList)) {
+    tempTable <- tableList[[z_]]
+    qIndex <- grep("Qval", colnames(tempTable))
+    if (length(qIndex) > 0) {
+      for (q in 1:length(qIndex)) {
+        # Replace 0 p-values
+        indexZero <- which(tempTable[, qIndex[q] - 1] == 0)
+        if (length(indexZero) > 0) {
+          tempTable[indexZero, qIndex[q] - 1] <- 10^-300
+        }
+        if (applyFDR) {
+          tempTable[, qIndex[q]] <- p.adjust(tempTable[, qIndex[q] - 1],
+            method = "fdr"
+          )
+        }
+      }
+    }
+    filename <- tableNames[z_]
+    if (!is.null(suffix)) {
+      filename <- gsub(".csv", paste0("___", suffix, ".csv"), filename)
+    }
+    write.csv(tempTable, file = filename)
+  }
+
+  if (length(timeTables) > 0) {
+    for (z_ in 1:length(timeTables)) {
+      tempTable <- timeTables[[z_]]
+      qIndex <- grep("Qval", colnames(tempTable))
+      if (length(qIndex) > 0) {
+        for (q in 1:length(qIndex)) {
+          indexZero <- which(tempTable[, qIndex[q] - 1] == 0)
+          if (length(indexZero) > 0) {
+            tempTable[indexZero, qIndex[q] - 1] <- 10^-300
+          }
+          if (applyFDR) {
+            tempTable[, qIndex[q]] <- p.adjust(tempTable[, qIndex[q] - 1],
+              method = "fdr"
+            )
+          }
+        }
+      }
+      filename <- timeTableNames[z_]
+      if (!is.null(suffix)) {
+        filename <- gsub(".csv", paste0("___", suffix, ".csv"), filename)
+      }
+      write.csv(tempTable, file = filename, row.names = FALSE)
+    }
+  }
+}
+
+
+#' Run the per-protein modeling loop. Fits models for each protein and populates
+#' tableList and timeTables. Shared by msTrawl() and miniTrawl().
+#' @return list(tableList, timeTables)
+#' @keywords internal
+.run_protein_models <- function(readyDf, uProt, tableList, timeTables,
+                                bridgeMod, sampleNames, fixedForm,
+                                tParm, minRE, randID,
+                                n_cat, factorNames, levelNames, n_levels,
+                                n_cont, contNames, coVars,
+                                timeVars, timeDiff,
+                                tCatIndex, tCatFactorIndex, tCatName,
+                                timeLevelN) {
+
+  for (prot in 1:length(uProt)) {
+    protDat <- readyDf[which(readyDf$Protein.ID == uProt[prot]), ]
+
+    # refactor scan numbers or convert to a standard intercept
+    protDat$Scan <- factor(protDat$Scan)
+    if (length(levels(protDat$Scan)) == 1) {
+      protDat$Scan <- 1
+    }
+
+    # Split Data and refactor SampleIDs
+    if (bridgeMod == TRUE) {
+      bridgeDat <- protDat[which(protDat$Bridge == 1), ]
+      notBridge <- protDat[which(protDat$Bridge == 0), ]
+      notBridge$SampleID <- factor(notBridge$SampleID)
+    } else {
+      bridgeDat <- NULL
+      notBridge <- protDat
+      notBridge$SampleID <- factor(notBridge$SampleID)
+    }
+
+    # First Estimate the protein in each sample
+    tempRes <- try(adaptModel(notBridge,
+      covType = "None",
+      fixedForm, bridgeDat, tParm,
+      fullColumns = sampleNames, minRE, randID,
+      reducedMod = FALSE, multiLevel = FALSE
+    ))
+    tableList[[1]][prot, 4:ncol(tableList[[1]])] <- tempRes[[1]]
+    tableList[[1]][prot, 3] <- tempRes[[3]]
+
+    # Reset the table index
+    tabIndex <- 2
+
+    # Populate any factor tables
+    if (n_cat > 0) {
+      factorCols <- which(colnames(protDat) %in% factorNames)
+
+      # Re-factor to get rid of any levels that won't appear in this model
+      for (f in 1:length(factorCols)) {
+        notBridge[, factorCols[f]] <- factor(notBridge[, factorCols[f]])
+      }
+
+      countTable <- tapply(notBridge$SampleID, notBridge[, factorCols],
+        FUN = function(x) length(unique(x))
+      )
+
+      N_PerLevel <- lapply(factorCols, function(x)
+        tapply(notBridge$SampleID, notBridge[, x],
+          FUN = function(x) length(unique(x))))
+      minPerLevel <- min(unlist(lapply(N_PerLevel, min)))
+
+      nCells <- sum(!is.na(countTable))
+      nFactors <- length(factorCols)
+      nLevels <- sum(unlist(lapply(N_PerLevel, length)))
+
+      # If we have continuous covariates, make sure they have
+      # support in every level (> 2 + n_cont)
+      if (n_cont > 0 & minPerLevel < n_cont + 2) {
+        reducedMod <- TRUE
+        coVars_reduced <- coVars[-which(coVars %in% contNames)]
+        p_ <- nLevels - nFactors + length(timeVars)
+      } else {
+        reducedMod <- FALSE
+        coVars_reduced <- coVars
+        p_ <- nLevels - nFactors + length(timeVars) + n_cont
+      }
+
+      # Make sure we have at least minRE "extra" samples to estimate between
+      # sample variance
+      if (sum(countTable, na.rm = T) - p_ < minRE) {
+        multiLevel <- FALSE
+      } else {
+        multiLevel <- TRUE
+      }
+
+      for (i in 1:length(factorNames)) {
+        allLevels <- levelNames[[i]]
+        levelN <- length(levelNames[[i]])
+        factorIndex <- which(colnames(protDat) == factorNames[i])
+        for (j in 1:levelN) {
+          # See if the reference is present
+          obsLevels <- levels(factor(notBridge[, factorNames[i]]))
+          obsBool <- rep(FALSE, length(allLevels) - 1)
+          obsBool[allLevels[-j] %in% obsLevels] <- TRUE
+
+          refIndex <- which(obsLevels == allLevels[j])
+          if (length(refIndex) == 0) {
+            tabIndex <- tabIndex + 1
+            next
+          }
+
+          # refactor target variable
+          notBridge[, factorNames[i]] <- factor(notBridge[, factorNames[i]],
+            levels = c(obsLevels[refIndex], obsLevels[-refIndex])
+          )
+
+          # refactor the other factor variables and adjust model formula
+          dropInteract <- FALSE
+          tempCov <- coVars_reduced
+          for (z in 1:length(factorCols)) {
+            if (colnames(notBridge)[factorCols[z]] != factorNames[i]) {
+              notBridge[, factorCols[z]] <- factor(notBridge[, factorCols[z]])
+            }
+            if (length(levels(notBridge[, factorCols[z]])) < 2) {
+              tempCov <- tempCov[-which(tempCov == factorNames[z])]
+              if (tCatFactorIndex == z) {
+                dropInteract <- TRUE
+              }
+            }
+          }
+          tempStr <- paste0("lIntensity ~ ", paste(c(tempCov, timeVars), collapse = " + "))
+
+          if (tCatIndex > 0 & dropInteract == FALSE) {
+            tempStr <- paste0(
+              tempStr, " + ",
+              paste0(c(rep(paste0(tCatName, ":"), length(timeVars))),
+                timeVars,
+                collapse = " + "
+              )
+            )
+          }
+
+          fullColumns <- paste0(factorNames[i], allLevels[-j])
+          lhtList <- list()
+          if (tCatFactorIndex == i) {
+            for (tNumber in 1:length(allLevels)) {
+              if (tNumber == 1) {
+                testStr <- paste0("X_", timeVars)
+              } else {
+                if (obsBool[tNumber - 1] == FALSE) {
+                  lhtList[[tNumber]] <- NA
+                  next
+                }
+                testStr <- paste0(
+                  "X_",
+                  factorNames[i], allLevels[-j][tNumber - 1],
+                  ":", timeVars
+                )
+              }
+              lhtList[[tNumber]] <- testStr
+            }
+            if (timeDiff == FALSE) {
+              lhtList <- lhtList[1]
+            }
+          }
+
+          if (length(obsLevels) < 2) {
+            tabIndex <- tabIndex + 1
+            next
+          }
+
+          tempForm <- as.formula(tempStr)
+
+          if (length(obsLevels) < 2 & (tCatFactorIndex != i)) {
+            tabIndex <- tabIndex + 1
+            next
+          }
+
+          tempRes <- try(adaptModel(
+            protDat = notBridge,
+            covType = "Factor", fixedForm = tempForm,
+            bridgeDat, tParm, lhtList,
+            fullColumns, minRE, randID,
+            reducedMod, multiLevel
+          ))
+
+          tableList[[tabIndex]][prot, 4:ncol(tableList[[tabIndex]])] <- tempRes[[1]]
+          tableList[[tabIndex]][prot, 3] <- tempRes[[3]]
+          if (length(lhtList) > 0) {
+            timeTables[[j]][prot, 4:ncol(timeTables[[j]])] <- tempRes[[2]]
+            timeTables[[j]][prot, 3] <- tempRes[[3]]
+          }
+
+          tabIndex <- tabIndex + 1
+        } # End level loop
+      } # End factor loop
+    } else {
+      tempForm <- fixedForm
+    }
+
+    # Populate tables for continuous covariates
+    if (n_cont > 0) {
+      if (n_cat > 0) {
+        for (z in 1:length(factorCols)) {
+          notBridge[, factorCols[z]] <- factor(notBridge[, factorCols[z]])
+        }
+        if (reducedMod == TRUE) {
+          tempCov <- c(tempCov, contNames)
+          tempStr <- paste0("lIntensity ~ ", paste(c(tempCov), collapse = " + "))
+          tempForm <- as.formula(tempStr)
+        }
+      } else {
+        multiLevel <- TRUE
+      }
+
+      tempRes <- try(adaptModel(
+        protDat = notBridge,
+        covType = "Continuous", fixedForm = tempForm,
+        bridgeDat, tParm, lhtList = NULL,
+        fullColumns = contNames, minRE, randID,
+        reducedMod = FALSE, multiLevel
+      ))
+      if (is.null(tempRes)) { next }
+
+      for (i in 1:length(contNames)) {
+        tableList[[tabIndex]][prot, 4:6] <- tempRes[[1]][i, ]
+        tableList[[tabIndex]][prot, 3] <- tempRes[[3]]
+        tabIndex <- tabIndex + 1
+      }
+    }
+
+    # If it hasn't been done yet, populate the time tables
+    if (tParm == "Time") {
+      lhtList <- list()
+      lhtList[[1]] <- paste0("X_", timeVars)
+
+      if (n_cat > 0) {
+        for (z in 1:length(factorCols)) {
+          notBridge[, factorCols[z]] <- factor(notBridge[, factorCols[z]])
+        }
+      }
+
+      tempRes <- try(adaptModel(
+        protDat = notBridge,
+        covType = "Time", fixedForm = tempForm,
+        bridgeDat, tParm, lhtList,
+        fullColumns = timeVars, minRE, randID,
+        reducedMod = FALSE, multiLevel = TRUE
+      ))
+
+      timeTables[[1]][prot, 4:ncol(timeTables[[1]])] <- tempRes[[2]]
+      timeTables[[1]][prot, 3] <- tempRes[[3]]
+    } # End Time tests
+
+    print(paste0("Protein ", prot, " Complete"))
+  } # End Protein Loop
+
+  list(tableList = tableList, timeTables = timeTables)
+}
