@@ -17,5 +17,8 @@ RUN pip install --no-cache-dir ".[dev]"
 
 WORKDIR /repo/python
 
+# Verify CLI is available
+RUN python -m mstrawler.cli check
+
 # Default: run tests
 CMD ["pytest", "tests/", "-v"]

@@ -26,6 +26,9 @@ dev = [
     "black>=24.0",
 ]
 
+[project.scripts]
+mstrawler = "mstrawler.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
